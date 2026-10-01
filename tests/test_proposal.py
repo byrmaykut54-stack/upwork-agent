@@ -23,8 +23,10 @@ class ProposalTests(unittest.TestCase):
 
     def test_screening_never_invents(self):
         job = {"screening_questions": ["Describe your experience with Apps Script."]}
-        drafts = build_screening_drafts(job)
-        self.assertTrue(drafts[0]["answer"].startswith("[Taslak:"))
+        drafts = build_screening_drafts(job, self.profile)
+        self.assertIn("Excel automation", drafts[0]["answer"])
+        self.assertIn("6-in-1 automated Excel toolkit", drafts[0]["answer"])
+        self.assertNotIn("10 years", drafts[0]["answer"])
 
 
 if __name__ == "__main__":
