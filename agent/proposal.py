@@ -3,23 +3,23 @@ def build_proposal(job, profile):
     skills = ", ".join(job.get("skills", [])[:5])
     experience = profile.get("relevant_experience", [])
     proof = profile.get("proof", "")
-    lines = ["Hi,", "", f"I can help with {title.lower()}.", ""]
+    lines = ["Hi,", "", "I can help with " + title.lower() + ".", ""]
     if experience:
         lines.append("My relevant background includes " + "; ".join(experience[:3]) + ".")
     if proof:
         lines.extend(["", proof])
     if skills:
-        lines.extend(["", f"Relevant areas for this project include {skills}."])
+        lines.extend(["", "Relevant areas for this project include " + skills + "."])
     lines.extend(["", "I would first review the current workflow and requirements, then build or improve the solution with a focus on reliability and maintainability.", "", "Best regards"])
     return "\n".join(lines)
-
 
 def qualification_check(job, profile):
     """Return unmet preferred qualifications without inventing evidence."""
     preferred = job.get("preferred_qualifications", {}) or {}
     unmet = []
-    language = preferred.get("english_proficiency")
-    if language and language.lower() == "fluent" and profile.get("language", "").lower() != "fluent":
+    language = str(preferred.get("english_proficiency", ""))
+    profile_language = str(profile.get("language", ""))
+    if language.lower() == "fluent" and "fluent" not in profile_language.lower():
         unmet.append("English proficiency: Fluent")
     if preferred.get("rising_talent") and not profile.get("rising_talent", False):
         unmet.append("Rising Talent")
@@ -39,7 +39,21 @@ def qualification_check(job, profile):
         unmet.append("Contractor type: " + str(preferred.get("contractor_type")))
     return unmet
 
-
-def build_screening_drafts(job):
-    """Create honest answer placeholders; never fabricate experience."""
-    return [{"question": q, "answer": "[Taslak: Bu soruya gerçek deneyim ve kanıtlarımıza göre cevap verilmelidir.]"} for q in job.get("screening_questions", [])]
+def build_screening_drafts(job, profile):
+    """Draft only answers supported by verified profile facts; never fabricate."""
+    drafts = []
+    experience_text = "; ".join(profile.get("relevant_experience", [])[:4])
+    proof = profile.get("proof", "")
+    for question in job.get("screening_questions", []) or []:
+        q = str(question).strip()
+        lower = q.lower()
+        answer = "[Manual answer required: no verified evidence is available for this question.]"
+        if any(term in lower for term in ("recent experience", "similar project", "similar projects", "experience")):
+            if experience_text or proof:
+                answer = ("My relevant experience includes " + experience_text + ". " + proof).strip()
+        elif "certification" in lower or "certifications" in lower:
+            answer = "I do not have a verified certification to list for this project."
+        elif "portfolio" in lower:
+            answer = "I do not currently have a verified Upwork portfolio item to reference."
+        drafts.append({"question": q, "answer": answer})
+    return drafts
