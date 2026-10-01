@@ -23,13 +23,11 @@ def run_pipeline(raw_jobs, config=None, profile=None, connects_balance=0):
         score = score_job(job, config)
         job = {**job, **score}
 
-        gate = apply_gate(job, connects_balance)
+        gate = apply_gate(job, connects_balance, config)
         job["eligibility"] = gate
-
         job["proposal_preview"] = build_proposal(job, profile)
         job["qualification_gaps"] = qualification_check(job, profile)
         job["screening_drafts"] = build_screening_drafts(job, profile)
-
         ranked.append(job)
 
     ranked.sort(
