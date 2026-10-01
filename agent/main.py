@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from scorer import score_job
+from proposal import build_proposal, build_screening_drafts, qualification_check
 
 ROOT = Path(__file__).resolve().parent
 
@@ -11,6 +12,7 @@ def main():
         return
 
     config = json.loads((ROOT / "config.json").read_text())
+    profile = json.loads((ROOT / "profile.json").read_text())
     jobs = json.loads(jobs_path.read_text())
 
     ranked = []
@@ -25,6 +27,19 @@ def main():
             print(f"  + {reason}")
         for risk in job["risks"]:
             print(f"  ! {risk}")
+        print("  Proposal draft:")
+        print(build_proposal(job, profile))
+        unmet = qualification_check(job, profile)
+        if unmet:
+            print("  Unmet preferred qualifications:")
+            for item in unmet:
+                print(f"  ! {item}")
+        screening = build_screening_drafts(job)
+        if screening:
+            print("  Screening drafts require manual completion:")
+            for item in screening:
+                print(f"  ? {item['question']}")
+                print(f"    {item['answer']}")
 
 if __name__ == "__main__":
     main()
