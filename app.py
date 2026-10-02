@@ -380,6 +380,31 @@ def put_settings():
                   (session["user_id"], mh, mf, ",".join(map(str, keywords)), ",".join(map(str, excludes))))
     return jsonify(ok=True)
 
+@app.get("/admin/reset")
+def admin_reset_page():
+    return """<!doctype html><html lang="tr"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MexAy Yönetici Sıfırlama</title><style>body{margin:0;background:#071020;color:#fff;font-family:Inter,system-ui;padding:28px}.box{max-width:420px;margin:10vh auto;background:#101d42;border:1px solid #2b3b65;border-radius:18px;padding:24px}input,button{width:100%;height:48px;box-sizing:border-box;border-radius:10px;margin-top:10px}input{background:#080f20;border:1px solid #33456f;color:#fff;padding:0 14px}button{border:0;background:#F5C451;color:#111;font-weight:800}.warn{color:#ffb0b8;font-size:13px;line-height:1.5}</style><div class="box"><h2>MexAy Yönetici Sıfırlama</h2><p class="warn">Bu işlem TÜM kullanıcı, iş, teklif, bildirim ve ayar kayıtlarını kalıcı olarak siler. Veritabanı tabloları korunur.</p><form method="post" action="/api/admin/reset-all"><input name="token" type="password" placeholder="Geçici yönetici anahtarı" required><input name="confirm" placeholder="MEXAY-RESET-ALL yazın" required><button type="submit">TÜM KAYITLARI SİL</button></form></div></html>"""
+
+@app.post("/api/admin/reset-all")
+def admin_reset_all():
+    expected = os.environ.get("MEXAY_RESET_TOKEN", "")
+    d = request.get_json(silent=True) or request.form
+    token = request.headers.get("X-MexAy-Reset-Token") or d.get("token", "")
+    confirm = d.get("confirm", "")
+    if not expected or not secrets.compare_digest(str(token), expected):
+        return jsonify(error="Geçersiz veya süresi dolmuş yönetici anahtarı."), 403
+    if confirm != "MEXAY-RESET-ALL":
+        return jsonify(error="Onay metni hatalı."), 400
+    with db() as c:
+        c.execute("TRUNCATE TABLE notifications, proposals, jobs, settings, users RESTART IDENTITY CASCADE")
+    session.clear()
+    if request.form:
+        return "<!doctype html><meta name='viewport' content='width=device-width'><body style='font-family:system-ui;background:#071020;color:#fff;padding:40px;text-align:center'><h2>MexAy kayıtları temizlendi.</h2><p>Tüm kullanıcı ve uygulama kayıtları silindi. Tablo yapısı korundu.</p><a href='/' style='color:#F5C451'>Giriş ekranına dön</a></body>"
+    return jsonify(ok=True, message="Tüm kullanıcı ve uygulama kayıtları temizlendi.", tables_preserved=True)
+
+@app.get("/admin/reset")
+def admin_reset_page_alias():
+    return admin_reset_page()
+
 init_db()
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
