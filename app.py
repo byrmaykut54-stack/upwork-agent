@@ -107,13 +107,24 @@ def scan():
     if "user_id" not in session:
         return jsonify(error="Giriş gerekli."), 401
     d = request.get_json() or {}
+    jobs = d.get("jobs", [])
+    if not isinstance(jobs, list):
+        return jsonify(error="jobs alanı liste olmalı."), 400
+    try:
+        connects_balance = int(d.get("connects_balance", 0))
+    except (TypeError, ValueError):
+        connects_balance = 0
     c = db()
     u = c.execute("SELECT plan,scans_used FROM users WHERE id=?", (session["user_id"],)).fetchone()
     limit = TRIAL_SCAN_LIMIT if u["plan"] == "trial" else 1000
     if u["scans_used"] >= limit:
         c.close()
         return jsonify(error="Aylık tarama kotanız doldu.", quota={"used": u["scans_used"], "limit": limit}), 429
-    result = run_pipeline(d.get("jobs", []), d.get("connects_balance", 0))
+    try:
+        result = run_pipeline(jobs, connects_balance=connects_balance)
+    except Exception:
+        c.close()
+        return jsonify(error="Tarama sırasında beklenmeyen bir sunucu hatası oluştu."), 500
     c.execute("UPDATE users SET scans_used=scans_used+1 WHERE id=?", (session["user_id"],))
     c.commit()
     used = u["scans_used"] + 1
