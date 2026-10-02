@@ -45,6 +45,30 @@ class ApiTests(unittest.TestCase):
         self.assertIn("result", r.get_json())
         self.assertEqual(r.get_json()["quota"]["used"], 1)
 
+    def test_health_and_auth_guards(self):
+        r = self.client.get("/health")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["status"], "ok")
+
+        r = self.client.post("/api/scan", json={"jobs": []})
+        self.assertEqual(r.status_code, 401)
+
+        r = self.client.post("/api/auth/login", json={"email": "missing@example.com", "password": "wrongpass"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_duplicate_registration_and_logout(self):
+        payload = {"email": "duplicate@example.com", "password": "testpassword123"}
+        self.assertEqual(self.client.post("/api/auth/register", json=payload).status_code, 200)
+        self.assertEqual(self.client.post("/api/auth/register", json=payload).status_code, 409)
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+        self.assertFalse(self.client.get("/api/me").get_json()["authenticated"])
+
+    def test_invalid_json_payloads_are_rejected(self):
+        r = self.client.post("/api/auth/register", json={"email": 123, "password": "testpassword123"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/auth/login", json={"email": "x@example.com", "password": 123})
+        self.assertEqual(r.status_code, 400)
+
     def test_invalid_jobs_payload_is_rejected(self):
         self.client.post("/api/auth/register", json={
             "email": "invalid@example.com",
