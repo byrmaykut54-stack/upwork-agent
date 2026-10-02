@@ -13,6 +13,17 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1") == "1",
 )
 
+
+@app.after_request
+def security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.is_secure or os.environ.get("COOKIE_SECURE", "1") == "1":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL tanımlı değil. Render PostgreSQL bağlantısını ekleyin.")
@@ -302,13 +313,32 @@ def update_proposal(proposal_id):
     if (e := auth_required()): return e
     d = request.get_json(silent=True) or {}
     status = str(d.get("status", "draft"))
-    allowed = {"draft", "review", "approved", "submitted", "replied", "won", "lost", "archived"}
-    if status not in allowed: return jsonify(error="Geçersiz durum."), 400
+    allowed = {"draft", "review", "approved", "replied", "won", "lost", "archived"}
+    if status not in allowed: return jsonify(error="Teklif gönderimi bu ekrandan yapılamaz. Önce açık onay gereklidir."), 400
     with db() as c:
         r = c.execute("SELECT id FROM proposals WHERE id=%s AND user_id=%s", (proposal_id, session["user_id"])).fetchone()
         if not r: return jsonify(error="Teklif bulunamadı."), 404
         c.execute("UPDATE proposals SET status=%s,updated_at=NOW() WHERE id=%s", (status, proposal_id))
     return jsonify(ok=True, status=status)
+
+
+@app.post("/api/proposals/<int:proposal_id>/submit")
+def submit_proposal(proposal_id):
+    if (e := auth_required()): return e
+    d = request.get_json(silent=True) or {}
+    if d.get("confirm") is not True:
+        return jsonify(error="Teklif gönderimi için açık kullanıcı onayı gereklidir.", requires_confirmation=True), 400
+    with db() as c:
+        p = c.execute("""SELECT p.id,p.status,j.title FROM proposals p
+                         JOIN jobs j ON j.id=p.job_id
+                         WHERE p.id=%s AND p.user_id=%s""",
+                      (proposal_id, session["user_id"])).fetchone()
+        if not p:
+            return jsonify(error="Teklif bulunamadı."), 404
+        if p["status"] != "approved":
+            return jsonify(error="Teklif gönderilmeden önce 'approved' durumuna alınmalıdır."), 409
+    return jsonify(error="Upwork bağlantısı henüz kurulmadı; gerçek gönderim yapılmadı.",
+                   submitted=False, requires_upwork_connection=True), 409
 
 @app.get("/api/notifications")
 def notifications():
