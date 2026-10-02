@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
 
-from eligibility import apply_gate
-from job_normalizer import normalize_jobs
-from proposal import build_proposal, build_screening_drafts, qualification_check
-from scorer import score_job
+from .eligibility import apply_gate
+from .job_normalizer import normalize_jobs
+from .proposal import build_proposal, build_screening_drafts, qualification_check
+from .scorer import score_job
 
 
 ROOT = Path(__file__).resolve().parent
