@@ -1,9 +1,7 @@
 import json
 from pathlib import Path
-from scorer import score_job
-from proposal import build_proposal, build_screening_drafts, qualification_check
-from job_normalizer import normalize_jobs
-from report import render_job_report
+
+from pipeline import preview_summary, run_pipeline
 
 ROOT = Path(__file__).resolve().parent
 
@@ -18,33 +16,16 @@ def main():
     profile = json.loads((ROOT / "profile.json").read_text())
     raw_jobs = json.loads(jobs_path.read_text())
 
-    jobs = normalize_jobs(raw_jobs)
-    ranked = []
+    connects_balance = 0
+    ranked = run_pipeline(
+        raw_jobs,
+        config=config,
+        profile=profile,
+        connects_balance=connects_balance,
+    )
 
-    for job in jobs:
-        result = score_job(job, config)
-        ranked.append({**job, **result})
-
-    ranked.sort(key=lambda x: x["score"], reverse=True)
-
-    for job in ranked[:config["max_proposals_to_consider"]]:
-        print(render_job_report(job))
-        print("Proposal draft:")
-        print(build_proposal(job, profile))
-
-        unmet = qualification_check(job, profile)
-        if unmet:
-            print("Unmet preferred qualifications:")
-            for item in unmet:
-                print("! " + item)
-
-        screening = build_screening_drafts(job, profile)
-        if screening:
-            print("Screening drafts require manual completion:")
-            for item in screening:
-                print("? " + item["question"])
-                print("  " + item["answer"])
-
+    for job in ranked:
+        print(json.dumps(preview_summary(job), ensure_ascii=False, indent=2))
         print("-" * 60)
 
 
