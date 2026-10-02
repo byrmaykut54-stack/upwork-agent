@@ -52,9 +52,14 @@ def home():
 
 @app.post("/api/auth/register")
 def register():
-    d = request.get_json() or {}
-    email = d.get("email", "").strip().lower()
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify(error="Geçersiz JSON gövdesi."), 400
+    email = d.get("email", "")
     password = d.get("password", "")
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify(error="E-posta ve şifre metin olmalı."), 400
+    email = email.strip().lower()
     if not email or "@" not in email or len(password) < 8:
         return jsonify(error="Geçerli e-posta ve en az 8 karakterli şifre gerekli."), 400
     c = db()
@@ -74,12 +79,18 @@ def register():
 
 @app.post("/api/auth/login")
 def login():
-    d = request.get_json() or {}
-    email = d.get("email", "").strip().lower()
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify(error="Geçersiz JSON gövdesi."), 400
+    email = d.get("email", "")
+    password = d.get("password", "")
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify(error="E-posta ve şifre metin olmalı."), 400
+    email = email.strip().lower()
     c = db()
     u = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
     c.close()
-    if not u or not check_password_hash(u["password_hash"], d.get("password", "")):
+    if not u or not check_password_hash(u["password_hash"], password):
         return jsonify(error="E-posta veya şifre hatalı."), 401
     session.clear()
     session["user_id"] = u["id"]
@@ -116,6 +127,10 @@ def scan():
         connects_balance = 0
     c = db()
     u = c.execute("SELECT plan,scans_used FROM users WHERE id=?", (session["user_id"],)).fetchone()
+    if not u:
+        c.close()
+        session.clear()
+        return jsonify(error="Oturum geçersiz. Lütfen tekrar giriş yapın."), 401
     limit = TRIAL_SCAN_LIMIT if u["plan"] == "trial" else 1000
     if u["scans_used"] >= limit:
         c.close()
