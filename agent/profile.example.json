@@ -1,6 +1,14 @@
 {
-  "title": "Excel & Sheets Automation Specialist",
+  "title": "Your Upwork service title",
   "rate_usd": 18,
-  "relevant_experience": ["Excel/Google Sheets automation", "dashboard building", "data cleaning"],
-  "proof": "Only include real portfolio or client evidence here."
+  "relevant_experience": [
+    "Verified experience #1",
+    "Verified experience #2"
+  ],
+  "proof": "Only verified portfolio or client evidence.",
+  "language": "English - Basic",
+  "job_success_score": null,
+  "earnings_usd": null,
+  "rising_talent": false,
+  "has_portfolio": false
 }
