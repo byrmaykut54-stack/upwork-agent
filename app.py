@@ -1,4 +1,4 @@
-import os, json, datetime, secrets
+import os, json, datetime, secrets, urllib.parse, urllib.request
 import psycopg
 from psycopg.rows import dict_row
 from flask import Flask, request, jsonify, session, send_from_directory
@@ -379,6 +379,83 @@ def put_settings():
                      min_fixed=EXCLUDED.min_fixed,keywords=EXCLUDED.keywords,excludes=EXCLUDED.excludes""",
                   (session["user_id"], mh, mf, ",".join(map(str, keywords)), ",".join(map(str, excludes))))
     return jsonify(ok=True)
+
+@app.get("/auth/google")
+def google_login():
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "")
+    if not client_id or not redirect_uri:
+        return jsonify(error="Google ile giriş henüz yapılandırılmadı."), 503
+    params = urllib.parse.urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "online",
+        "prompt": "select_account",
+    })
+    return __import__("flask").redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params)
+
+@app.get("/auth/google/callback")
+def google_callback():
+    code = request.args.get("code", "")
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "")
+    if not code or not client_id or not client_secret or not redirect_uri:
+        return "Google ile giriş yapılandırması eksik.", 400
+    payload = urllib.parse.urlencode({
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }).encode()
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_data = json.loads(resp.read().decode())
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return "Google erişim anahtarı alınamadı.", 502
+        info_req = urllib.request.Request(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": "Bearer " + access_token},
+        )
+        with urllib.request.urlopen(info_req, timeout=10) as resp:
+            info = json.loads(resp.read().decode())
+    except Exception:
+        return "Google hesabı doğrulanamadı.", 502
+
+    email = str(info.get("email", "")).strip().lower()
+    if not email or info.get("email_verified") is not True:
+        return "Doğrulanmış Google e-postası gerekli.", 400
+
+    with db() as c:
+        u = c.execute("SELECT * FROM users WHERE email=%s", (email,)).fetchone()
+        if not u:
+            generated = secrets.token_urlsafe(32)
+            u = c.execute(
+                """INSERT INTO users(email,password_hash,plan,usage_period)
+                   VALUES(%s,%s,'trial',%s) RETURNING *""",
+                (email, generate_password_hash(generated), period()),
+            ).fetchone()
+            c.execute("INSERT INTO settings(user_id) VALUES(%s)", (u["id"],))
+            c.execute(
+                """INSERT INTO notifications(user_id,title,body,kind)
+                   VALUES(%s,%s,%s,%s)""",
+                (u["id"], "MexAy hazır", "Google hesabınızla kayıt tamamlandı.", "success"),
+            )
+        else:
+            u = normalize_usage(c, u)
+    session.clear()
+    session["user_id"] = u["id"]
+    return __import__("flask").redirect("/")
 
 @app.get("/admin/reset")
 def admin_reset_page():
