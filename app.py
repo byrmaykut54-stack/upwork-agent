@@ -386,7 +386,7 @@ def admin_reset_page():
 
 @app.post("/api/admin/reset-all")
 def admin_reset_all():
-    expected = os.environ.get("MEXAY_RESET_TOKEN", "")
+    expected = os.environ.get("MEXAY_ADMIN_KEY", "")
     d = request.get_json(silent=True) or request.form
     token = request.headers.get("X-MexAy-Reset-Token") or d.get("token", "")
     confirm = d.get("confirm", "")
