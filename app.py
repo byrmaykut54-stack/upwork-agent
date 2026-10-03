@@ -1,7 +1,7 @@
 import os, json, datetime, secrets, urllib.parse, urllib.request
 import psycopg
 from psycopg.rows import dict_row
-from flask import Flask, request, jsonify, session, send_from_directory
+from flask import Flask, request, jsonify, session, send_from_directory, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from agent.pipeline import run_pipeline
 
@@ -76,6 +76,14 @@ def init_db():
             user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             title TEXT NOT NULL, body TEXT NOT NULL, kind TEXT DEFAULT 'info',
             read BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS password_reset_tokens(
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT UNIQUE NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            used BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )""")
         c.execute("""CREATE TABLE IF NOT EXISTS settings(
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -380,6 +388,68 @@ def put_settings():
                   (session["user_id"], mh, mf, ",".join(map(str, keywords)), ",".join(map(str, excludes))))
     return jsonify(ok=True)
 
+@app.post("/api/auth/forgot")
+def forgot_password():
+    d = request.get_json(silent=True) or {}
+    email = str(d.get("email", "")).strip().lower()
+    if "@" not in email:
+        return jsonify(error="Geçerli bir e-posta adresi girin."), 400
+    with db() as c:
+        u = c.execute("SELECT id,email FROM users WHERE email=%s", (email,)).fetchone()
+    generic = "Eğer bu e-posta kayıtlıysa, şifre yenileme bağlantısı gönderildi."
+    if not u:
+        return jsonify(ok=True, message=generic)
+    resend_key = os.environ.get("RESEND_API_KEY", "")
+    from_email = os.environ.get("RESEND_FROM_EMAIL", "")
+    base_url = os.environ.get("APP_BASE_URL", "https://upwork-agent-pro.onrender.com").rstrip("/")
+    if not resend_key or not from_email:
+        return jsonify(error="Şifre yenileme e-posta servisi henüz yapılandırılmadı."), 503
+    raw = secrets.token_urlsafe(32)
+    token_hash = __import__("hashlib").sha256(raw.encode()).hexdigest()
+    expires = now() + datetime.timedelta(minutes=30)
+    with db() as c:
+        c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE user_id=%s AND used=FALSE", (u["id"],))
+        c.execute("INSERT INTO password_reset_tokens(user_id,token_hash,expires_at) VALUES(%s,%s,%s)", (u["id"], token_hash, expires))
+    reset_url = f"{base_url}/reset-password?token={urllib.parse.quote(raw)}"
+    email_payload = json.dumps({
+        "from": from_email, "to": [email], "subject": "MexAy şifre yenileme",
+        "html": f"""<div style="font-family:Arial,sans-serif;line-height:1.6">
+        <h2>MexAy şifrenizi yenileyin</h2>
+        <p>Şifrenizi yenilemek için aşağıdaki bağlantıyı 30 dakika içinde kullanın.</p>
+        <p><a href="{reset_url}">Yeni şifre oluştur</a></p>
+        <p>Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.</p></div>"""
+    }).encode()
+    req = urllib.request.Request("https://api.resend.com/emails", data=email_payload,
+        headers={"Authorization": "Bearer " + resend_key, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status >= 300: raise RuntimeError("email_failed")
+    except Exception:
+        with db() as c:
+            c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE token_hash=%s", (token_hash,))
+        return jsonify(error="Şifre yenileme e-postası gönderilemedi."), 502
+    return jsonify(ok=True, message=generic)
+
+@app.get("/reset-password")
+def reset_password_page():
+    return send_from_directory("web", "reset-password.html")
+
+@app.post("/api/auth/reset-password")
+def reset_password():
+    d = request.get_json(silent=True) or {}
+    token = str(d.get("token", ""))
+    password = d.get("password", "")
+    if not token or not isinstance(password, str) or len(password) < 8:
+        return jsonify(error="Geçerli bağlantı ve en az 8 karakterli yeni şifre gerekli."), 400
+    token_hash = __import__("hashlib").sha256(token.encode()).hexdigest()
+    with db() as c:
+        row = c.execute("SELECT id,user_id FROM password_reset_tokens WHERE token_hash=%s AND used=FALSE AND expires_at>NOW()", (token_hash,)).fetchone()
+        if not row: return jsonify(error="Şifre yenileme bağlantısı geçersiz veya süresi dolmuş."), 400
+        c.execute("UPDATE users SET password_hash=%s WHERE id=%s", (generate_password_hash(password), row["user_id"]))
+        c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE id=%s", (row["id"],))
+    session.clear()
+    return jsonify(ok=True, message="Şifreniz yenilendi.")
+
 @app.get("/auth/google")
 def google_login():
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -394,7 +464,7 @@ def google_login():
         "access_type": "online",
         "prompt": "select_account",
     })
-    return __import__("flask").redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params)
+    return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params)
 
 @app.get("/auth/google/callback")
 def google_callback():
@@ -455,7 +525,7 @@ def google_callback():
             u = normalize_usage(c, u)
     session.clear()
     session["user_id"] = u["id"]
-    return __import__("flask").redirect("/")
+    return redirect("/")
 
 @app.get("/admin/reset")
 def admin_reset_page():
