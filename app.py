@@ -167,6 +167,14 @@ def init_db():
             facts JSONB NOT NULL DEFAULT '{}'::jsonb
         )""")
         central.initialize(c)
+        if os.getenv("LOG_SCHEMA_DIAGNOSTICS") == "1":
+            rows = c.execute("""SELECT table_schema,table_name,array_agg(column_name ORDER BY ordinal_position) AS columns
+                FROM information_schema.columns WHERE table_name IN ('users','notifications','password_reset_tokens','settings','jobs','proposals')
+                AND table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema,table_name ORDER BY table_schema,table_name""").fetchall()
+            app.logger.warning("Database table structure: %s", json.dumps(rows))
+            for table in ('users','jobs','proposals','settings','notifications'):
+                count = c.execute('SELECT COUNT(*) AS n FROM '+table).fetchone()['n']
+                app.logger.warning("Database row count %s=%s", table, count)
 
 def profile_for(c, uid):
     row = c.execute("SELECT facts FROM user_profiles WHERE user_id=%s", (uid,)).fetchone()
