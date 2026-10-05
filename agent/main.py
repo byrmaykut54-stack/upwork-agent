@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
-from pipeline import preview_summary, run_pipeline
+if __package__:
+    from .pipeline import preview_summary, run_pipeline
+else:
+    from pipeline import preview_summary, run_pipeline
 
 ROOT = Path(__file__).resolve().parent
 
@@ -13,7 +16,8 @@ def main():
         return
 
     config = json.loads((ROOT / "config.json").read_text())
-    profile = json.loads((ROOT / "profile.json").read_text())
+    profile_path = ROOT / "profile.json"
+    profile = json.loads(profile_path.read_text()) if profile_path.exists() else {}
     raw_jobs = json.loads(jobs_path.read_text())
 
     connects_balance = 0

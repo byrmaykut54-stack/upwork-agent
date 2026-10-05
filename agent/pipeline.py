@@ -15,7 +15,10 @@ def run_pipeline(raw_jobs, config=None, profile=None, connects_balance=0):
     if config is None:
         config = json.loads((ROOT / "config.json").read_text())
     if profile is None:
-        profile = json.loads((ROOT / "profile.json").read_text())
+        # A deployment must work without a private local profile file. Empty
+        # facts produce a neutral draft rather than invented qualifications.
+        profile_path = ROOT / "profile.json"
+        profile = json.loads(profile_path.read_text()) if profile_path.exists() else {}
 
     ranked = []
     for raw_job in raw_jobs:

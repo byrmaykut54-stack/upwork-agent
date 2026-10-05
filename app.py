@@ -1,17 +1,65 @@
-import os, json, datetime, secrets, urllib.parse, urllib.request
+import os, json, datetime, secrets, urllib.parse, urllib.request, hashlib, math, re, time
+from pathlib import Path
+from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
 from flask import Flask, request, jsonify, session, send_from_directory, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from agent.pipeline import run_pipeline
+import mailer
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 app.secret_key = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
 app.config.update(
+    MAX_CONTENT_LENGTH=512 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1") == "1",
 )
+
+@app.before_request
+def validate_request():
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("Origin", "")
+        expected = os.environ.get("APP_BASE_URL", request.host_url).rstrip("/")
+        if origin and origin.rstrip("/") != expected:
+            return jsonify(error="İstek kaynağı doğrulanamadı."), 403
+        if request.is_json and not isinstance(request.get_json(silent=True), dict):
+            return jsonify(error="JSON gövdesi bir nesne olmalı."), 400
+
+@app.errorhandler(psycopg.Error)
+def database_error(error):
+    app.logger.error("Database operation failed: %s", type(error).__name__)
+    return jsonify(error="Veritabanına şu anda erişilemiyor. Lütfen tekrar deneyin."), 503
+
+@app.errorhandler(413)
+def payload_too_large(error):
+    return jsonify(error="İstek gövdesi çok büyük."), 413
+
+AUTH_ATTEMPTS = defaultdict(deque)
+
+def auth_rate_limit(email, limit=10, window=60):
+    key = (request.endpoint, request.remote_addr, email)
+    entries = AUTH_ATTEMPTS[key]
+    current = time.monotonic()
+    while entries and entries[0] <= current - window:
+        entries.popleft()
+    if len(entries) >= limit:
+        return jsonify(error="Çok fazla deneme. Lütfen kısa süre sonra tekrar deneyin."), 429
+    entries.append(current)
+    if len(AUTH_ATTEMPTS) > 10000:
+        for old in list(AUTH_ATTEMPTS):
+            if not AUTH_ATTEMPTS[old] or AUTH_ATTEMPTS[old][-1] <= current - window:
+                del AUTH_ATTEMPTS[old]
+    return None
+
+def valid_email(email):
+    return isinstance(email, str) and len(email) <= 254 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) is not None
+
+def start_session(u):
+    session.clear()
+    session["user_id"] = u["id"]
+    session["auth_version"] = hashlib.sha256(u["password_hash"].encode()).hexdigest()
 
 
 @app.after_request
@@ -95,6 +143,23 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user_score ON jobs(user_id, score DESC, created_at DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_proposals_user_updated ON proposals(user_id, updated_at DESC)")
+        c.execute("""CREATE TABLE IF NOT EXISTS user_profiles(
+            user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            facts JSONB NOT NULL DEFAULT '{}'::jsonb
+        )""")
+
+def profile_for(c, uid):
+    row = c.execute("SELECT facts FROM user_profiles WHERE user_id=%s", (uid,)).fetchone()
+    return row["facts"] if row else {}
+
+def scan_config(c, uid):
+    config = json.loads((Path(__file__).parent / "agent/config.json").read_text())
+    row = c.execute("SELECT * FROM settings WHERE user_id=%s", (uid,)).fetchone()
+    if row:
+        config.update(min_hourly_rate_usd=row["min_hourly"], min_fixed_budget_usd=row["min_fixed"],
+                      keywords=[x.strip() for x in row["keywords"].split(",") if x.strip()],
+                      exclude_keywords=[x.strip() for x in row["excludes"].split(",") if x.strip()])
+    return config
 
 def normalize_usage(c, u):
     current = period()
@@ -126,10 +191,13 @@ def current_user():
         return None
     with db() as c:
         u = c.execute("SELECT * FROM users WHERE id=%s", (uid,)).fetchone()
+        if not u or session.get("auth_version") != hashlib.sha256(u["password_hash"].encode()).hexdigest():
+            session.clear()
+            return None
         return normalize_usage(c, u) if u else None
 
 def auth_required():
-    if not session.get("user_id"):
+    if not current_user():
         return jsonify(error="Giriş gerekli."), 401
     return None
 
@@ -151,8 +219,9 @@ def register():
     d = request.get_json(silent=True) or {}
     email = str(d.get("email", "")).strip().lower()
     password = d.get("password", "")
-    if "@" not in email or not isinstance(password, str) or len(password) < 8:
+    if not valid_email(email) or not isinstance(password, str) or not 8 <= len(password) <= 128:
         return jsonify(error="Geçerli e-posta ve en az 8 karakterli şifre gerekli."), 400
+    if (e := auth_rate_limit(email, limit=5)): return e
     with db() as c:
         try:
             u = c.execute("""INSERT INTO users(email,password_hash,plan,usage_period)
@@ -165,8 +234,7 @@ def register():
         except psycopg.errors.UniqueViolation:
             c.rollback()
             return jsonify(error="Bu e-posta zaten kayıtlı."), 409
-    session.clear()
-    session["user_id"] = u["id"]
+    start_session(u)
     return jsonify(ok=True, user=user_payload(u))
 
 @app.post("/api/auth/login")
@@ -174,14 +242,16 @@ def login():
     d = request.get_json(silent=True) or {}
     email = str(d.get("email", "")).strip().lower()
     password = d.get("password", "")
+    if not valid_email(email) or not isinstance(password, str) or not 1 <= len(password) <= 128:
+        return jsonify(error="Geçerli e-posta ve şifre gerekli."), 400
+    if (e := auth_rate_limit(email)): return e
     with db() as c:
         u = c.execute("SELECT * FROM users WHERE email=%s", (email,)).fetchone()
         if u:
             u = normalize_usage(c, u)
     if not u or not isinstance(password, str) or not check_password_hash(u["password_hash"], password):
         return jsonify(error="E-posta veya şifre hatalı."), 401
-    session.clear()
-    session["user_id"] = u["id"]
+    start_session(u)
     return jsonify(ok=True, user=user_payload(u))
 
 @app.post("/api/auth/logout")
@@ -223,17 +293,22 @@ def scan():
     if (e := auth_required()): return e
     d = request.get_json(silent=True) or {}
     jobs = d.get("jobs", [])
-    if not isinstance(jobs, list):
-        return jsonify(error="jobs alanı liste olmalı."), 400
+    if not isinstance(jobs, list) or not jobs or len(jobs) > 100 or any(not isinstance(j, dict) for j in jobs):
+        return jsonify(error="1 ile 100 arasında ilan nesnesi gerekli."), 400
+    try:
+        connects = int(d.get("connects_balance", 0))
+        if connects < 0: raise ValueError()
+    except (ValueError, TypeError):
+        return jsonify(error="Connects bakiyesi sıfır veya pozitif bir tam sayı olmalı."), 400
     with db() as c:
-        u = normalize_usage(c, c.execute("SELECT * FROM users WHERE id=%s", (session["user_id"],)).fetchone())
+        u = normalize_usage(c, c.execute("SELECT * FROM users WHERE id=%s FOR UPDATE", (session["user_id"],)).fetchone())
         lim = plan_limits(u["plan"])["scans"]
         if u["scans_used"] >= lim:
             return jsonify(error="Aylık tarama kotanız doldu.", quota={"used": u["scans_used"], "limit": lim}), 429
         try:
-            result = run_pipeline(jobs, connects_balance=int(d.get("connects_balance", 0)))
-        except Exception:
-            return jsonify(error="Tarama sırasında beklenmeyen bir sunucu hatası oluştu."), 500
+            result = run_pipeline(jobs, config=scan_config(c, u["id"]), profile=profile_for(c, u["id"]), connects_balance=connects)
+        except (ValueError, TypeError, AttributeError, IndexError):
+            return jsonify(error="İlan verilerinin biçimini kontrol edin."), 400
         for j in result:
             c.execute("""INSERT INTO jobs(user_id,external_id,title,url,description,score,status,payload)
                          VALUES(%s,%s,%s,%s,%s,%s,'new',%s)""",
@@ -266,15 +341,8 @@ def import_jobs():
     jobs = d.get("jobs", [])
     if not isinstance(jobs, list) or not jobs:
         return jsonify(error="En az bir ilan gerekli."), 400
-    with db() as c:
-        for j in jobs[:100]:
-            if not isinstance(j, dict): continue
-            c.execute("""INSERT INTO jobs(user_id,external_id,title,url,description,score,status,payload)
-                         VALUES(%s,%s,%s,%s,%s,%s,'imported',%s)""",
-                      (session["user_id"], str(j.get("id", "")), str(j.get("title", "İsimsiz ilan")),
-                       j.get("url", ""), j.get("description", ""), int(j.get("score", 0)),
-                       json.dumps(j, ensure_ascii=False)))
-    return jsonify(ok=True, added=min(len([j for j in jobs[:100] if isinstance(j, dict)]), 100))
+    # Imports go through the same analysis and quota rules as a scan.
+    return scan()
 
 @app.post("/api/jobs/<int:job_id>/save")
 def save_job(job_id):
@@ -300,7 +368,7 @@ def create_proposal():
     d = request.get_json(silent=True) or {}
     job_id = d.get("job_id")
     with db() as c:
-        u = normalize_usage(c, c.execute("SELECT * FROM users WHERE id=%s", (session["user_id"],)).fetchone())
+        u = normalize_usage(c, c.execute("SELECT * FROM users WHERE id=%s FOR UPDATE", (session["user_id"],)).fetchone())
         lim = plan_limits(u["plan"])["proposals"]
         if u["proposals_used"] >= lim:
             return jsonify(error="Aylık teklif hazırlama kotanız doldu.", quota={"used": u["proposals_used"], "limit": lim}), 429
@@ -308,7 +376,7 @@ def create_proposal():
         if not r: return jsonify(error="İlan bulunamadı."), 404
         j = r["payload"] if isinstance(r["payload"], dict) else json.loads(r["payload"])
         from agent.proposal import build_proposal
-        with open("agent/profile.json", encoding="utf-8") as f: profile = json.load(f)
+        profile = profile_for(c, u["id"])
         body = build_proposal(j, profile)
         cur = c.execute("""INSERT INTO proposals(user_id,job_id,body,status)
                            VALUES(%s,%s,%s,'draft') RETURNING id""", (u["id"], job_id, body))
@@ -326,6 +394,11 @@ def update_proposal(proposal_id):
     with db() as c:
         r = c.execute("SELECT id FROM proposals WHERE id=%s AND user_id=%s", (proposal_id, session["user_id"])).fetchone()
         if not r: return jsonify(error="Teklif bulunamadı."), 404
+        if "body" in d:
+            body = d["body"]
+            if not isinstance(body, str) or not 1 <= len(body.strip()) <= 10000:
+                return jsonify(error="Teklif metni 1–10000 karakter olmalı."), 400
+            c.execute("UPDATE proposals SET body=%s WHERE id=%s", (body.strip(), proposal_id))
         c.execute("UPDATE proposals SET status=%s,updated_at=NOW() WHERE id=%s", (status, proposal_id))
     return jsonify(ok=True, status=status)
 
@@ -376,10 +449,14 @@ def put_settings():
     if (e := auth_required()): return e
     d = request.get_json(silent=True) or {}
     keywords, excludes = d.get("keywords", []), d.get("excludes", [])
+    if any(not isinstance(v, list) or len(v) > 100 or any(not isinstance(x, str) or len(x) > 120 for x in v) for v in (keywords, excludes)):
+        return jsonify(error="Anahtar ve hariç kelimeler metin listeleri olmalı."), 400
     try:
         mh, mf = float(d.get("min_hourly", 15)), float(d.get("min_fixed", 100))
     except (TypeError, ValueError):
         return jsonify(error="Bütçe değerleri sayısal olmalı."), 400
+    if not all(math.isfinite(v) and 0 <= v <= 1000000 for v in (mh, mf)):
+        return jsonify(error="Bütçe değerleri sıfır veya pozitif olmalı."), 400
     with db() as c:
         c.execute("""INSERT INTO settings(user_id,min_hourly,min_fixed,keywords,excludes)
                      VALUES(%s,%s,%s,%s,%s)
@@ -392,18 +469,17 @@ def put_settings():
 def forgot_password():
     d = request.get_json(silent=True) or {}
     email = str(d.get("email", "")).strip().lower()
-    if "@" not in email:
+    if not valid_email(email):
         return jsonify(error="Geçerli bir e-posta adresi girin."), 400
+    if (e := auth_rate_limit(email, limit=3, window=300)): return e
+    if not mailer.configured():
+        return jsonify(error="Şifre yenileme e-posta servisi henüz yapılandırılmadı."), 503
     with db() as c:
         u = c.execute("SELECT id,email FROM users WHERE email=%s", (email,)).fetchone()
     generic = "Eğer bu e-posta kayıtlıysa, şifre yenileme bağlantısı gönderildi."
     if not u:
         return jsonify(ok=True, message=generic)
-    resend_key = os.environ.get("RESEND_API_KEY", "")
-    from_email = os.environ.get("RESEND_FROM_EMAIL", "")
     base_url = os.environ.get("APP_BASE_URL", "https://upwork-agent-pro.onrender.com").rstrip("/")
-    if not resend_key or not from_email:
-        return jsonify(error="Şifre yenileme e-posta servisi henüz yapılandırılmadı."), 503
     raw = secrets.token_urlsafe(32)
     token_hash = __import__("hashlib").sha256(raw.encode()).hexdigest()
     expires = now() + datetime.timedelta(minutes=30)
@@ -411,20 +487,8 @@ def forgot_password():
         c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE user_id=%s AND used=FALSE", (u["id"],))
         c.execute("INSERT INTO password_reset_tokens(user_id,token_hash,expires_at) VALUES(%s,%s,%s)", (u["id"], token_hash, expires))
     reset_url = f"{base_url}/reset-password?token={urllib.parse.quote(raw)}"
-    email_payload = json.dumps({
-        "from": from_email, "to": [email], "subject": "MexAy şifre yenileme",
-        "html": f"""<div style="font-family:Arial,sans-serif;line-height:1.6">
-        <h2>MexAy şifrenizi yenileyin</h2>
-        <p>Şifrenizi yenilemek için aşağıdaki bağlantıyı 30 dakika içinde kullanın.</p>
-        <p><a href="{reset_url}">Yeni şifre oluştur</a></p>
-        <p>Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.</p></div>"""
-    }).encode()
-    req = urllib.request.Request("https://api.resend.com/emails", data=email_payload,
-        headers={"Authorization": "Bearer " + resend_key, "Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status >= 300: raise RuntimeError("email_failed")
-    except Exception:
+    if not mailer.send(email, "MexAy Upwork Agent şifre yenileme",
+                       f"Şifrenizi 30 dakika içinde yenileyin:\n{reset_url}\n\nBu isteği siz yapmadıysanız e-postayı yok sayın."):
         with db() as c:
             c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE token_hash=%s", (token_hash,))
         return jsonify(error="Şifre yenileme e-postası gönderilemedi."), 502
@@ -439,14 +503,15 @@ def reset_password():
     d = request.get_json(silent=True) or {}
     token = str(d.get("token", ""))
     password = d.get("password", "")
-    if not token or not isinstance(password, str) or len(password) < 8:
+    if not token or len(token) > 128 or not isinstance(password, str) or not 8 <= len(password) <= 128:
         return jsonify(error="Geçerli bağlantı ve en az 8 karakterli yeni şifre gerekli."), 400
     token_hash = __import__("hashlib").sha256(token.encode()).hexdigest()
     with db() as c:
-        row = c.execute("SELECT id,user_id FROM password_reset_tokens WHERE token_hash=%s AND used=FALSE AND expires_at>NOW()", (token_hash,)).fetchone()
+        row = c.execute("SELECT id,user_id FROM password_reset_tokens WHERE token_hash=%s AND used=FALSE AND expires_at>NOW() FOR UPDATE", (token_hash,)).fetchone()
         if not row: return jsonify(error="Şifre yenileme bağlantısı geçersiz veya süresi dolmuş."), 400
         c.execute("UPDATE users SET password_hash=%s WHERE id=%s", (generate_password_hash(password), row["user_id"]))
         c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE id=%s", (row["id"],))
+        c.execute("UPDATE password_reset_tokens SET used=TRUE WHERE user_id=%s", (row["user_id"],))
     session.clear()
     return jsonify(ok=True, message="Şifreniz yenilendi.")
 
@@ -454,8 +519,11 @@ def reset_password():
 def google_login():
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "")
-    if not client_id or not redirect_uri:
-        return jsonify(error="Google ile giriş henüz yapılandırılmadı."), 503
+    if not client_id or not redirect_uri or not os.environ.get("GOOGLE_CLIENT_SECRET"):
+        return redirect("/?auth_error=google_unavailable")
+    state = secrets.token_urlsafe(32)
+    session['google_state'] = state
+    session['google_state_created'] = time.time()
     params = urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -463,11 +531,19 @@ def google_login():
         "scope": "openid email profile",
         "access_type": "online",
         "prompt": "select_account",
+        "state": state,
     })
     return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params)
 
 @app.get("/auth/google/callback")
 def google_callback():
+    expected = session.pop('google_state', '')
+    created = session.pop('google_state_created', 0)
+    received = request.args.get('state', '')
+    if not expected or not received or not secrets.compare_digest(expected, received) or time.time() - created > 600:
+        return redirect('/?auth_error=google_state')
+    if request.args.get('error'):
+        return redirect('/?auth_error=google_cancelled')
     code = request.args.get("code", "")
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -523,9 +599,33 @@ def google_callback():
             )
         else:
             u = normalize_usage(c, u)
-    session.clear()
-    session["user_id"] = u["id"]
+    start_session(u)
     return redirect("/")
+
+@app.get('/api/capabilities')
+def capabilities():
+    return jsonify(google_login=all(os.getenv(x) for x in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI')),
+                   password_reset=mailer.configured(), upwork_connected=False, automatic_submission=False)
+
+@app.get('/api/profile')
+def get_profile():
+    if (e := auth_required()): return e
+    with db() as c:
+        return jsonify(profile=profile_for(c, session['user_id']))
+
+@app.put('/api/profile')
+def put_profile():
+    if (e := auth_required()): return e
+    facts = request.get_json(silent=True) or {}
+    experience = facts.get('relevant_experience', [])
+    proof = facts.get('proof', '')
+    if not isinstance(experience, list) or len(experience) > 10 or any(not isinstance(x, str) or len(x) > 500 for x in experience) or not isinstance(proof, str) or len(proof) > 2000:
+        return jsonify(error='Profil metinlerinin uzunluğunu ve biçimini kontrol edin.'), 400
+    facts = {'relevant_experience': [x.strip() for x in experience if x.strip()], 'proof': proof.strip()}
+    with db() as c:
+        c.execute('INSERT INTO user_profiles(user_id,facts) VALUES(%s,%s) ON CONFLICT(user_id) DO UPDATE SET facts=EXCLUDED.facts',
+                  (session['user_id'], json.dumps(facts)))
+    return jsonify(ok=True)
 
 @app.get("/admin/reset")
 def admin_reset_page():
