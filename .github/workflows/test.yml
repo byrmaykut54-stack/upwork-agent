@@ -18,18 +18,16 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: test-only
-          POSTGRES_DB: upwork_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mexay_test
         ports: [5432:5432]
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      TEST_DATABASE_URL: postgresql://postgres:test-only@localhost:5432/upwork_test
-      COOKIE_SECURE: "0"
-      SESSION_SECRET: test-only-session-secret
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mexay_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,16 +38,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python
-        run: python -m compileall -q app.py mailer.py agent tests
-      - name: Check browser JavaScript
-        run: |
-          python - <<'PY'
-          import re
-          from pathlib import Path
-          for p in Path('web').glob('*.html'):
-              for i, script in enumerate(re.findall(r'<script>(.*?)</script>',p.read_text(),re.S)):
-                  Path(f'/tmp/{p.stem}-{i}.js').write_text(script)
-          PY
-          for f in /tmp/index-*.js /tmp/reset-password-*.js; do node --check "$f"; done
+        run: python -m compileall -q app.py central.py agent tests
+      - name: Check browser scripts
+        run: python scripts/check_web.py
       - name: Run tests
         run: python -m unittest discover -s tests -v

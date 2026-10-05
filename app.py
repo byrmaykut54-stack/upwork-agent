@@ -6,12 +6,13 @@ from psycopg.rows import dict_row
 from flask import Flask, request, jsonify, session, send_from_directory, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from agent.pipeline import run_pipeline
+import central
 import mailer
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 app.secret_key = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
 app.config.update(
-    MAX_CONTENT_LENGTH=512 * 1024,
+    MAX_CONTENT_LENGTH=2_000_000,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1") == "1",
@@ -57,10 +58,28 @@ def valid_email(email):
     return isinstance(email, str) and len(email) <= 254 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) is not None
 
 def start_session(u):
+    csrf = session.get("csrf") or secrets.token_urlsafe(32)
     session.clear()
+    session["csrf"] = csrf
     session["user_id"] = u["id"]
     session["auth_version"] = hashlib.sha256(u["password_hash"].encode()).hexdigest()
 
+
+@app.before_request
+def csrf_guard():
+    if request.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        payload = request.get_json(silent=True)
+        if payload is not None and not isinstance(payload, dict):
+            return jsonify(error="İstek içeriği bir JSON nesnesi olmalı."), 400
+        expected = session.get("csrf", "")
+        supplied = request.headers.get("X-CSRF-Token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            return jsonify(error="Güvenlik oturumu yenilenmeli. Sayfayı yenileyin."), 403
+
+@app.get("/api/session")
+def session_info():
+    session.setdefault("csrf", secrets.token_urlsafe(32))
+    return jsonify(csrf=session["csrf"], session_ready=bool(os.environ.get("SESSION_SECRET")), google_ready=bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET") and os.environ.get("GOOGLE_REDIRECT_URI")))
 
 @app.after_request
 def security_headers(response):
@@ -147,6 +166,7 @@ def init_db():
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             facts JSONB NOT NULL DEFAULT '{}'::jsonb
         )""")
+        central.initialize(c)
 
 def profile_for(c, uid):
     row = c.execute("SELECT facts FROM user_profiles WHERE user_id=%s", (uid,)).fetchone()
@@ -160,6 +180,7 @@ def scan_config(c, uid):
                       keywords=[x.strip() for x in row["keywords"].split(",") if x.strip()],
                       exclude_keywords=[x.strip() for x in row["excludes"].split(",") if x.strip()])
     return config
+
 
 def normalize_usage(c, u):
     current = period()
@@ -192,7 +213,8 @@ def current_user():
     with db() as c:
         u = c.execute("SELECT * FROM users WHERE id=%s", (uid,)).fetchone()
         if not u or session.get("auth_version") != hashlib.sha256(u["password_hash"].encode()).hexdigest():
-            session.clear()
+            session.pop("user_id", None)
+            session.pop("auth_version", None)
             return None
         return normalize_usage(c, u) if u else None
 
@@ -206,7 +228,7 @@ def health():
     try:
         with db() as c:
             c.execute("SELECT 1")
-        return {"status": "ok", "service": "mexay", "version": "2.0", "database": "postgresql"}
+        return {"status": "ok", "service": "mexay", "version": "3.0", "database": "postgresql"}
     except Exception:
         return {"status": "error", "service": "mexay", "database": "unavailable"}, 503
 
@@ -223,17 +245,14 @@ def register():
         return jsonify(error="Geçerli e-posta ve en az 8 karakterli şifre gerekli."), 400
     if (e := auth_rate_limit(email, limit=5)): return e
     with db() as c:
-        try:
-            u = c.execute("""INSERT INTO users(email,password_hash,plan,usage_period)
-                             VALUES(%s,%s,'trial',%s) RETURNING *""",
-                          (email, generate_password_hash(password), period())).fetchone()
-            c.execute("INSERT INTO settings(user_id) VALUES(%s)", (u["id"],))
-            c.execute("""INSERT INTO notifications(user_id,title,body,kind)
-                         VALUES(%s,%s,%s,%s)""",
-                      (u["id"], "MexAy hazır", "Hesabınız oluşturuldu. İlk taramanızı başlatabilirsiniz.", "success"))
-        except psycopg.errors.UniqueViolation:
-            c.rollback()
+        u = c.execute("""INSERT INTO users(email,password_hash,plan,usage_period)
+                         VALUES(%s,%s,'trial',%s) ON CONFLICT(email) DO NOTHING RETURNING *""",
+                      (email, generate_password_hash(password), period())).fetchone()
+        if not u:
             return jsonify(error="Bu e-posta zaten kayıtlı."), 409
+        c.execute("INSERT INTO settings(user_id) VALUES(%s)", (u["id"],))
+        c.execute("""INSERT INTO notifications(user_id,title,body,kind) VALUES(%s,%s,%s,%s)""",
+                  (u["id"], "MexAy hazır", "Hesabınız oluşturuldu. Platformlar bölümünden hesaplarınızı bağlayın.", "success"))
     start_session(u)
     return jsonify(ok=True, user=user_payload(u))
 
@@ -263,7 +282,7 @@ def logout():
 def me():
     u = current_user()
     if not u:
-        session.clear()
+        session.pop("user_id", None)
         return jsonify(authenticated=False)
     return jsonify(authenticated=True, user=user_payload(u))
 
@@ -391,15 +410,13 @@ def update_proposal(proposal_id):
     status = str(d.get("status", "draft"))
     allowed = {"draft", "review", "approved", "replied", "won", "lost", "archived"}
     if status not in allowed: return jsonify(error="Teklif gönderimi bu ekrandan yapılamaz. Önce açık onay gereklidir."), 400
+    body = d.get("body")
+    if body is not None and (not isinstance(body, str) or not body.strip() or len(body) > 20000):
+        return jsonify(error="Teklif metni 1–20000 karakter olmalı."), 400
     with db() as c:
         r = c.execute("SELECT id FROM proposals WHERE id=%s AND user_id=%s", (proposal_id, session["user_id"])).fetchone()
         if not r: return jsonify(error="Teklif bulunamadı."), 404
-        if "body" in d:
-            body = d["body"]
-            if not isinstance(body, str) or not 1 <= len(body.strip()) <= 10000:
-                return jsonify(error="Teklif metni 1–10000 karakter olmalı."), 400
-            c.execute("UPDATE proposals SET body=%s WHERE id=%s", (body.strip(), proposal_id))
-        c.execute("UPDATE proposals SET status=%s,updated_at=NOW() WHERE id=%s", (status, proposal_id))
+        c.execute("UPDATE proposals SET status=%s,body=COALESCE(%s,body),updated_at=NOW() WHERE id=%s", (status, body, proposal_id))
     return jsonify(ok=True, status=status)
 
 
@@ -652,6 +669,7 @@ def admin_reset_all():
 def admin_reset_page_alias():
     return admin_reset_page()
 
+central.register(app, db, auth_required, run_pipeline, profile_for)
 init_db()
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
