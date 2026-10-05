@@ -38,7 +38,8 @@ class ApiTests(unittest.TestCase):
         self.register()
         self.assertTrue(self.client.get('/api/me').json['authenticated'])
         self.assertEqual(self.mutate('/api/auth/register', {'email': 'test@example.com','password':'testpassword123'}).status_code,409)
-        self.assertEqual(self.mutate('/api/auth/logout').status_code,200)
+        # Match the browser's JSON content type and explicit empty object.
+        self.assertEqual(self.mutate('/api/auth/logout', {}).status_code,200)
         self.assertFalse(self.client.get('/api/me').json['authenticated'])
         self.csrf=self.client.get('/api/session').json['csrf']
         self.assertEqual(self.mutate('/api/auth/login',{'email':'test@example.com','password':'testpassword123'}).status_code,200)

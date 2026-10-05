@@ -41,5 +41,7 @@ jobs:
         run: python -m compileall -q app.py central.py agent tests
       - name: Check browser scripts
         run: python scripts/check_web.py
+      - name: Check logout behavior
+        run: node tests/web_logout.cjs
       - name: Run tests
         run: python -m unittest discover -s tests -v
