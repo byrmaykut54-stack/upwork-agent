@@ -174,3 +174,23 @@ class ApiTests(unittest.TestCase):
         results=run_pipeline([{'title':'Excel dashboard'}])
         self.assertEqual(len(results),1)
         self.assertNotIn('Verified experience #1',results[0]['proposal_preview'])
+
+    def test_business_schema_isolation_and_restart(self):
+        with app.db() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS public.users(
+                id BIGSERIAL PRIMARY KEY,business_id BIGINT,email TEXT,password_hash TEXT,
+                role TEXT,permissions TEXT,created_at TIMESTAMPTZ,email_verified_at TIMESTAMPTZ)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS public.password_reset_tokens(
+                token_hash TEXT PRIMARY KEY,user_id BIGINT,expires_at TIMESTAMPTZ,
+                used_at TIMESTAMPTZ,created_at TIMESTAMPTZ)""")
+            columns=c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='users'").fetchall()
+            self.assertNotIn('usage_period',[r['column_name'] for r in columns])
+        app.init_db()
+        self.register('isolated@example.com')
+        self.assertTrue(self.client.get('/api/me').json['authenticated'])
+        self.assertEqual(self.client.get('/health').json['schema'],'upwork_agent')
+        app.init_db()
+        self.assertTrue(self.client.get('/api/me').json['authenticated'])
+        with app.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM public.users').fetchone()['n'],0)
+            self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n'],1)

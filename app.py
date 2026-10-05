@@ -102,7 +102,8 @@ PLAN_LIMITS = {
 }
 
 def db():
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10,
+                           options="-c search_path=upwork_agent")
 
 def now():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
@@ -111,6 +112,10 @@ def period():
     return now().strftime("%Y-%m")
 
 def init_db():
+    # Keep Agent tables independent of the Business OS sharing this database.
+    # Do not include public in search_path: same-named legacy tables must never resolve.
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as bootstrap:
+        bootstrap.execute("CREATE SCHEMA IF NOT EXISTS upwork_agent")
     with db() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS users(
             id BIGSERIAL PRIMARY KEY,
@@ -167,14 +172,6 @@ def init_db():
             facts JSONB NOT NULL DEFAULT '{}'::jsonb
         )""")
         central.initialize(c)
-        if os.getenv("LOG_SCHEMA_DIAGNOSTICS") == "1":
-            rows = c.execute("""SELECT table_schema,table_name,array_agg(column_name ORDER BY ordinal_position) AS columns
-                FROM information_schema.columns WHERE table_name IN ('users','notifications','password_reset_tokens','settings','jobs','proposals')
-                AND table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema,table_name ORDER BY table_schema,table_name""").fetchall()
-            app.logger.warning("Database table structure: %s", json.dumps(rows))
-            for table in ('users','jobs','proposals','settings','notifications'):
-                count = c.execute('SELECT COUNT(*) AS n FROM '+table).fetchone()['n']
-                app.logger.warning("Database row count %s=%s", table, count)
 
 def profile_for(c, uid):
     row = c.execute("SELECT facts FROM user_profiles WHERE user_id=%s", (uid,)).fetchone()
@@ -235,8 +232,10 @@ def auth_required():
 def health():
     try:
         with db() as c:
-            c.execute("SELECT 1")
-        return {"status": "ok", "service": "mexay", "version": "3.0", "database": "postgresql"}
+            c.execute("SELECT id,email,password_hash,plan,usage_period,scans_used,proposals_used FROM users LIMIT 0")
+            c.execute("SELECT id,user_id,token_hash,expires_at,used FROM password_reset_tokens LIMIT 0")
+            c.execute("SELECT id,user_id,title,body,kind,read FROM notifications LIMIT 0")
+        return {"status": "ok", "service": "mexay", "version": "3.0.1", "database": "postgresql", "schema": "upwork_agent"}
     except Exception:
         return {"status": "error", "service": "mexay", "database": "unavailable"}, 503
 

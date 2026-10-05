@@ -3,7 +3,7 @@
 Live service: https://upwork-agent-pro.onrender.com
 
 One authenticated workspace for Upwork jobs/proposal drafts and Upwork, Gumroad,
-Fiverr orders. Existing accounts and job history are preserved by additive database migrations.
+Fiverr orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL schema. The Business OS public tables are independent; no cross-app users or password tokens are shared. Startup is idempotent and health checks verify required columns.
 
 - Platform cards show real connection status, last sync and provider errors.
 - Gumroad API connection validates `view_profile` and `view_sales`, encrypts the
