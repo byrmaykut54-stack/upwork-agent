@@ -19,7 +19,7 @@ async function scenario(fail) {
   const context = vm.createContext({
     document: {getElementById: node, querySelectorAll: () => []},
     location: {search: '', reload: () => reloads++},
-    URLSearchParams, setTimeout: () => {},
+    URLSearchParams, AbortController, clearTimeout: () => {}, setTimeout: () => {},
     fetch: async (url, options) => {
       calls.push({url, options});
       if (url === '/api/auth/logout') {
