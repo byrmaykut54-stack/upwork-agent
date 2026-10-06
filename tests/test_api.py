@@ -60,7 +60,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.mutate('/api/scan',{'jobs':'bad'}).status_code,400)
 
     def order(self, **changes):
-        row=dict(platform='fiverr',external_id='F1',title='Automation',amount='25.00',currency='USD',status='completed')
+        row=dict(platform='upwork',external_id='F1',title='Automation',amount='25.00',currency='USD',status='completed')
         row.update(changes)
         return row
 

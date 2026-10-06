@@ -3,7 +3,7 @@
 Live service: https://upwork-agent-pro.onrender.com
 
 One authenticated workspace for Upwork jobs/proposal drafts and Upwork, Gumroad,
-Fiverr orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL schema. The Business OS public tables are independent; no cross-app users or password tokens are shared. Startup is idempotent and health checks verify required columns.
+ orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL schema. The Business OS public tables are independent; no cross-app users or password tokens are shared. Startup is idempotent and health checks verify required columns.
 
 - Platform cards show real connection status, last sync and provider errors.
 - Gumroad API connection validates `view_profile` and `view_sales`, encrypts the
@@ -12,7 +12,7 @@ Fiverr orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL sc
 - Upwork requires an approved developer application's OAuth access token with job
   search permission. Sync reads marketplace jobs; proposals remain drafts and must
   be submitted on Upwork. Token renewal is manual. No contract/message API is implemented.
-- Fiverr is manual order tracking and normalized CSV import, with a direct platform link.
+-  is manual order tracking and normalized CSV import, with a direct platform link.
 - Orders use platform + order ID for deduplication. API records cannot be edited
   manually. Manual records support status, due date and notes.
 - Completed gross amounts are grouped by currency, without FX conversion or fee
@@ -55,7 +55,7 @@ external account connectivity is tested only after valid provider keys are suppl
 
 `platform,external_id,title,customer,amount,currency,status,due_date,notes`
 
-Platform: `upwork`, `gumroad`, `fiverr`. Currency defaults to `USD`.
+Platform: `upwork`, `gumroad`, ``. Currency defaults to `USD`.
 Status: `lead`, `in_progress`, `completed`, `cancelled`, `refunded`,
 `partial_refund`, `disputed`. Due date: `YYYY-MM-DD` or empty.
 
@@ -76,38 +76,3 @@ Final application submission remains human-confirmed. The product does not fabri
 ## Commercial
 
 See `sales/PRODUCT.md`, `sales/SETUP.md`, and `sales/FAQ.md`.
-
-### Fiverr bildirimleri — Gmail üzerinden
-
-Fiverr API anahtarı gerekmez. Platformlar → Fiverr → **Gmail ile bağla** üzerinden
-Fiverr bildirimlerini alan Google hesabına ayrı izin verin. ChatGPT Gmail bağlantısı
-bu sunucuya aktarılmaz; Google ile giriş izni de Gmail okuma izni sağlamaz.
-
-Sunucu ayarları:
-- Mevcut `GOOGLE_CLIENT_ID` ve `GOOGLE_CLIENT_SECRET` web uygulaması kimliği.
-- `GMAIL_REDIRECT_URI=https://upwork-agent-pro.onrender.com/auth/gmail/callback`.
-  Bu adresi aynı Google Cloud OAuth istemcisinin authorized redirect URI listesine ekleyin.
-- Google Cloud projesinde Gmail API'yi etkinleştirin ve consent screen'e
-  `https://www.googleapis.com/auth/gmail.readonly` kapsamını ekleyin.
-  Test modunda hesabı test kullanıcısı olarak ekleyin; Google'ın test modu token
-  süreleri ve yayına geçiş/doğrulama gereksinimleri geçerlidir.
-- Mevcut kalıcı `INTEGRATION_ENCRYPTION_KEY` (Fernet) ve `SESSION_SECRET` gerekir.
-  Şifreleme anahtarını değiştirmek mevcut platform tokenlarını geçersiz kılar.
-
-Okuma izni Gmail hesabına kapsamlıdır; uygulama yalnızca son 90 gündeki
-`from:(fiverr.com) -in:spam -in:trash` sorgusunu çalıştırır. E-postaları göndermez,
-silmez, okunmuş yapmaz. Google giriş güvenlik uyarıları Fiverr kaynaklı sayılmaz.
-Konuya göre Mesaj / Sipariş / Teklif / Bildirim sınıflandırması sezgiseldir.
-Yalnızca başlık, gönderici, kısa önizleme, tarih ve okunmamış bilgisi saklanır;
-bu akış tam Fiverr konuşmasını veya doğrulanmış sipariş tutarını sağlamaz.
-Satış toplamları değişmez; doğrulanmış siparişi mevcut manuel formdan ekleyin.
-
-**E-postaları eşitle** geçmişi üç kayıtlık sayfalarla tarar, en sık dakikada bir
-çalışır. Panel açık ve görünürken iki dakikada bir otomatik eşitleme yapılır.
-Panel kapalıyken arka plan görevi çalışmaz. Bağlantı kaldırıldığında sunucudaki
-Gmail tokenı ve bildirim kayıtları silinir; Google hesabındaki uygulama iznini
-Google hesap güvenliği sayfasından ayrıca iptal edebilirsiniz.
-
-Referanslar:
-- https://developers.google.com/workspace/gmail/api/auth/web-server
-- https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list

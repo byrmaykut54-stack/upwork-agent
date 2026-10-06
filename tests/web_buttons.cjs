@@ -7,8 +7,7 @@ vm.runInContext(html.split('<script>')[1].split('</script>')[0],context);await n
 vm.runInContext(fs.readFileSync('web/hub.js','utf8'),context);
 context.demo=async()=>{throw Error('Visible failure')};context.saveProfile=async()=>{assert.equal(node('button').disabled,true)};
 vm.runInContext(fs.readFileSync('web/actions.js','utf8'),context);
-// Missing setup remains clickable and opens a concrete explanation.
-context.S.fiverrMail={ready:false,connected:false,events:[]};assert.ok(!context.fiverrMailCard().includes('disabled'));await context.connectFiverrMail();assert.match(node('mb').innerHTML,/Google Cloud/);
+assert.ok(!fs.readFileSync('web/hub.js','utf8').toLowerCase().includes('fiverr'));
 // Every registered async action restores state even when an operation fails.
 handlers.click({target:{closest:()=>node('button')}});await context.demo();assert.equal(node('button').disabled,false);assert.equal(node('button').textContent,'Original');assert.match(node('toast').textContent,/Visible failure/);
 handlers.click({target:{closest:()=>node('button')}});await context.saveProfile();assert.equal(node('button').disabled,false);
@@ -18,4 +17,4 @@ await context.api('/api/settings',{method:'PUT',body:'{}'});const writes=calls.f
 const form={dataset:{},querySelector:()=>node('submit'),onsubmit:async()=>{throw Error('Form failure')}};await handlers.submit({target:form,submitter:node('submit'),preventDefault(){},stopImmediatePropagation(){}});assert.equal(form.dataset.actionBusy,undefined);assert.equal(node('submit').disabled,false);assert.match(node('toast').textContent,/Form failure/);
 // Logout keeps its existing state machine rather than being pre-disabled.
 await node('logout').onclick();assert.equal(node('logout').disabled,false);
-console.log('Gmail setup feedback, shared busy/error handling, CSRF recovery, dynamic forms and logout passed');})().catch(e=>{console.error(e);process.exitCode=1});
+console.log('Fiverr removal, shared busy/error handling, CSRF recovery, dynamic forms and logout passed');})().catch(e=>{console.error(e);process.exitCode=1});

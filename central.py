@@ -15,7 +15,6 @@ from flask import Blueprint, jsonify, request, session, Response
 PLATFORMS = {
     "upwork": {"name": "Upwork", "url": "https://www.upwork.com/nx/find-work/", "mode": "api"},
     "gumroad": {"name": "Gumroad", "url": "https://gumroad.com/dashboard", "mode": "api"},
-    "fiverr": {"name": "Fiverr", "url": "https://www.fiverr.com/", "mode": "email"},
 }
 STATUSES = {"lead", "in_progress", "completed", "cancelled", "refunded", "partial_refund", "disputed"}
 JOB_QUERY = """query { marketplaceJobPostingsSearch(searchType: USER_JOBS_SEARCH,
@@ -100,6 +99,10 @@ def initialize(c):
         name TEXT NOT NULL, price BIGINT NOT NULL, currency TEXT NOT NULL,
         url TEXT NOT NULL DEFAULT '', published BOOLEAN NOT NULL DEFAULT FALSE,
         PRIMARY KEY(user_id, external_id))""")
+    # Remove credentials belonging to the retired integration; order history is retained.
+    c.execute("DELETE FROM channel_connections WHERE platform='fiverr'")
+    if c.execute("SELECT to_regclass('channel_mail_events') AS relation").fetchone()["relation"]:
+        c.execute("DELETE FROM channel_mail_events WHERE platform='fiverr'")
     c.execute("CREATE INDEX IF NOT EXISTS idx_channel_orders_user ON channel_orders(user_id, occurred_at DESC)")
 
 
@@ -135,7 +138,7 @@ def validate_order(d):
 
 
 def save_manual(c, uid, order):
-    existing = c.execute("SELECT source FROM channel_orders WHERE user_id=%s AND platform=%s AND external_id=%s FOR UPDATE",
+    existing = c.execute("SELECT source FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s AND external_id=%s FOR UPDATE",
                          (uid, order["platform"], order["external_id"])).fetchone()
     if existing and existing["source"] != "manual":
         raise ValueError("API'den gelen kaydı elle değiştiremezsiniz.")
@@ -162,11 +165,11 @@ def register(app, db, auth_required, run_pipeline, profile_for):
             connections = {r["platform"]: r for r in c.execute(
                 "SELECT platform,label,last_synced_at,last_error FROM channel_connections WHERE user_id=%s", (session["user_id"],)).fetchall()}
             totals = c.execute("""SELECT currency,SUM(amount) AS amount,COUNT(*) AS count FROM channel_orders
-                WHERE user_id=%s AND status='completed' AND is_test=FALSE GROUP BY currency ORDER BY currency""", (session["user_id"],)).fetchall()
+                WHERE user_id=%s AND platform IN ('upwork','gumroad') AND status='completed' AND is_test=FALSE GROUP BY currency ORDER BY currency""", (session["user_id"],)).fetchall()
             stats = c.execute("""SELECT COUNT(*) AS orders,
                 COUNT(*) FILTER(WHERE status IN ('lead','in_progress')) AS active,
                 COUNT(*) FILTER(WHERE due_date<CURRENT_DATE AND status='in_progress') AS overdue
-                FROM channel_orders WHERE user_id=%s AND is_test=FALSE""", (session["user_id"],)).fetchone()
+                FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') AND is_test=FALSE""", (session["user_id"],)).fetchone()
         result = []
         for platform, info in PLATFORMS.items():
             con = connections.get(platform)
@@ -206,7 +209,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
     def disconnect(platform):
         if (e := auth_required()): return e
         with db() as c:
-            c.execute("DELETE FROM channel_connections WHERE user_id=%s AND platform=%s", (session["user_id"], platform))
+            c.execute("DELETE FROM channel_connections WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s", (session["user_id"], platform))
         return jsonify(ok=True)
 
     @bp.post("/api/channels/<platform>/sync")
@@ -216,7 +219,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
         with db() as c:
             # Prevent overlapping synchronizations and disconnect races for this account.
             c.execute("SELECT pg_advisory_xact_lock(%s)", (uid,))
-            con = c.execute("SELECT * FROM channel_connections WHERE user_id=%s AND platform=%s FOR UPDATE", (uid, platform)).fetchone()
+            con = c.execute("SELECT * FROM channel_connections WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s FOR UPDATE", (uid, platform)).fetchone()
             if not con: return jsonify(error="Önce platform erişim anahtarını bağlayın."), 409
             try:
                 token = cipher().decrypt(con["encrypted_token"].encode()).decode()
@@ -260,7 +263,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
                     if settings:
                         cfg.update(min_hourly_rate_usd=settings["min_hourly"],min_fixed_budget_usd=settings["min_fixed"],keywords=settings["keywords"].split(","),exclude_keywords=settings["excludes"].split(","))
                     for job in run_pipeline(raw, config=cfg, profile=profile_for(c,uid)):
-                        existing = c.execute("SELECT id FROM jobs WHERE user_id=%s AND external_id=%s ORDER BY id LIMIT 1", (uid,str(job["id"]))).fetchone()
+                        existing = c.execute("SELECT id FROM jobs WHERE user_id=%s AND platform IN ('upwork','gumroad') AND external_id=%s ORDER BY id LIMIT 1", (uid,str(job["id"]))).fetchone()
                         if existing:
                             c.execute("UPDATE jobs SET title=%s,url=%s,description=%s,score=%s,payload=%s,updated_at=NOW() WHERE id=%s",
                                 (job["title"],job.get("url"),job["description"],job["score"],json.dumps(job),existing["id"]))
@@ -269,10 +272,10 @@ def register(app, db, auth_required, run_pipeline, profile_for):
                                 (uid,str(job["id"]),job["title"],job.get("url"),job["description"],job["score"],json.dumps(job)))
                         count += 1
                 else: return jsonify(error="Bu platform manuel takip destekliyor."), 400
-                c.execute("UPDATE channel_connections SET last_synced_at=NOW(),cursor=%s,last_error='' WHERE user_id=%s AND platform=%s", (cursor,uid,platform))
+                c.execute("UPDATE channel_connections SET last_synced_at=NOW(),cursor=%s,last_error='' WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s", (cursor,uid,platform))
             except (InvalidToken, ProviderError, KeyError, ValueError, TypeError, AttributeError, psycopg.Error):
                 c.rollback()
-                c.execute("UPDATE channel_connections SET last_error=%s WHERE user_id=%s AND platform=%s",
+                c.execute("UPDATE channel_connections SET last_error=%s WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s",
                     ("Senkronizasyon başarısız. Erişim anahtarı ve okuma izinlerini kontrol edin.",uid,platform))
                 return jsonify(error="Senkronizasyon başarısız. Erişim anahtarı ve okuma izinlerini kontrol edin."), 502
         return jsonify(ok=True, processed=count, has_more=bool(cursor))
@@ -281,8 +284,8 @@ def register(app, db, auth_required, run_pipeline, profile_for):
     def orders():
         if (e := auth_required()): return e
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s ORDER BY occurred_at DESC LIMIT 1000", (session["user_id"],)).fetchall()
-            total = c.execute("SELECT COUNT(*) AS n FROM channel_orders WHERE user_id=%s", (session["user_id"],)).fetchone()["n"]
+            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY occurred_at DESC LIMIT 1000", (session["user_id"],)).fetchall()
+            total = c.execute("SELECT COUNT(*) AS n FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad')", (session["user_id"],)).fetchone()["n"]
         for r in rows: r["amount"] = str(r["amount"])
         return jsonify(orders=rows,total=total)
 
@@ -321,7 +324,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
     def products():
         if (e := auth_required()): return e
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_products WHERE user_id=%s ORDER BY name", (session["user_id"],)).fetchall()
+            rows = c.execute("SELECT * FROM channel_products WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY name", (session["user_id"],)).fetchall()
         return jsonify(products=rows)
 
     @bp.get("/api/channel-orders/export")
@@ -332,7 +335,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
         writer = csv.writer(output)
         writer.writerow(fields)
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s ORDER BY occurred_at DESC", (session["user_id"],)).fetchall()
+            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY occurred_at DESC", (session["user_id"],)).fetchall()
         for row in rows:
             cells = []
             for field in fields:

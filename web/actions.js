@@ -4,7 +4,7 @@ var activeButton=null;
 document.addEventListener('click',function(e){activeButton=e.target.closest('button');},true);
 function busy(button){if(!button||button.disabled)return function(){};var label=button.textContent;button.disabled=true;button.setAttribute('aria-busy','true');button.textContent='İşleniyor…';return function(){button.disabled=false;button.removeAttribute('aria-busy');button.textContent=label}}
 function guard(fn){return async function(){var b=activeButton;activeButton=null;var restore=busy(b);try{return await fn.apply(this,arguments)}catch(e){toast(e.message||'İşlem tamamlanamadı. Lütfen tekrar deneyin.')}finally{restore()}}}
-['demo','save','proposal','pstatus','readAll','saveSettings','saveProfile','doImp','syncChannel','disconnectChannel','connectFiverrMail','syncFiverrMail','disconnectFiverrMail','load'].forEach(function(name){if(typeof window[name]==='function')window[name]=guard(window[name])});
+['demo','save','proposal','pstatus','readAll','saveSettings','saveProfile','doImp','syncChannel','disconnectChannel','load'].forEach(function(name){if(typeof window[name]==='function')window[name]=guard(window[name])});
 ['sendReset','refresh'].forEach(function(id){var b=$(id);if(b&&b.onclick){var fn=b.onclick;b.onclick=function(){activeButton=b;return guard(fn).apply(this,arguments)}}});
 // A fresh session token protects every mutation, not only logout. Refresh once
 // on the server's CSRF rejection; other 403 responses must never be retried.
