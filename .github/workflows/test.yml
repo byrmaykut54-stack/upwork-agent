@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python
-        run: python -m compileall -q app.py central.py agent tests
+        run: python -m compileall -q app.py central.py fiverr_mail.py agent tests
       - name: Check browser scripts
         run: python scripts/check_web.py
       - name: Check logout behavior

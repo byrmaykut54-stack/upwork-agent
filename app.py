@@ -8,6 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from agent.pipeline import run_pipeline
 import central
 import mailer
+import fiverr_mail
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 app.secret_key = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
@@ -172,6 +173,7 @@ def init_db():
             facts JSONB NOT NULL DEFAULT '{}'::jsonb
         )""")
         central.initialize(c)
+        fiverr_mail.initialize(c)
 
 def profile_for(c, uid):
     row = c.execute("SELECT facts FROM user_profiles WHERE user_id=%s", (uid,)).fetchone()
@@ -677,6 +679,7 @@ def admin_reset_page_alias():
     return admin_reset_page()
 
 central.register(app, db, auth_required, run_pipeline, profile_for)
+fiverr_mail.register(app, db, auth_required)
 init_db()
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
