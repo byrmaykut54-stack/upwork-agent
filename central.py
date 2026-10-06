@@ -263,7 +263,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
                     if settings:
                         cfg.update(min_hourly_rate_usd=settings["min_hourly"],min_fixed_budget_usd=settings["min_fixed"],keywords=settings["keywords"].split(","),exclude_keywords=settings["excludes"].split(","))
                     for job in run_pipeline(raw, config=cfg, profile=profile_for(c,uid)):
-                        existing = c.execute("SELECT id FROM jobs WHERE user_id=%s AND platform IN ('upwork','gumroad') AND external_id=%s ORDER BY id LIMIT 1", (uid,str(job["id"]))).fetchone()
+                        existing = c.execute("SELECT id FROM jobs WHERE user_id=%s AND external_id=%s ORDER BY id LIMIT 1", (uid,str(job["id"]))).fetchone()
                         if existing:
                             c.execute("UPDATE jobs SET title=%s,url=%s,description=%s,score=%s,payload=%s,updated_at=NOW() WHERE id=%s",
                                 (job["title"],job.get("url"),job["description"],job["score"],json.dumps(job),existing["id"]))
@@ -324,7 +324,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
     def products():
         if (e := auth_required()): return e
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_products WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY name", (session["user_id"],)).fetchall()
+            rows = c.execute("SELECT * FROM channel_products WHERE user_id=%s ORDER BY name", (session["user_id"],)).fetchall()
         return jsonify(products=rows)
 
     @bp.get("/api/channel-orders/export")

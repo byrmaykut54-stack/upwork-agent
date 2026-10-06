@@ -59,6 +59,29 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/proposals').json['proposals'][0]['body'],'Reviewed proposal')
         self.assertEqual(self.mutate('/api/scan',{'jobs':'bad'}).status_code,400)
 
+    def test_all_panel_reads_after_login(self):
+        self.register()
+        paths = ['/api/dashboard','/api/jobs','/api/proposals','/api/notifications',
+                 '/api/settings','/api/channels','/api/channel-orders',
+                 '/api/channel-products','/api/profile']
+        for path in paths:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code,200,response.json)
+
+    @patch('central.remote_json')
+    def test_upwork_sync_updates_existing_job(self, remote):
+        self.register()
+        remote.return_value={'data':{'marketplaceJobPostingsSearch':{'edges':[
+            {'node':{'id':'job-123','title':'Excel dashboard','description':'Build a dashboard','skills':[]}}]}}}
+        self.assertEqual(self.mutate('/api/channels/upwork/connect',{'token':'test-readonly-token'}).status_code,200)
+        for _ in range(2):
+            response=self.mutate('/api/channels/upwork/sync')
+            self.assertEqual(response.status_code,200,response.json)
+        jobs=self.client.get('/api/jobs').json['jobs']
+        self.assertEqual(len(jobs),1)
+        self.assertEqual(jobs[0]['external_id'],'job-123')
+
     def order(self, **changes):
         row=dict(platform='upwork',external_id='F1',title='Automation',amount='25.00',currency='USD',status='completed')
         row.update(changes)
