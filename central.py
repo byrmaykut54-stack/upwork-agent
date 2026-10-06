@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request, session, Response
 PLATFORMS = {
     "upwork": {"name": "Upwork", "url": "https://www.upwork.com/nx/find-work/", "mode": "api"},
     "gumroad": {"name": "Gumroad", "url": "https://gumroad.com/dashboard", "mode": "api"},
-    "fiverr": {"name": "Fiverr", "url": "https://www.fiverr.com/", "mode": "manual"},
+    "fiverr": {"name": "Fiverr", "url": "https://www.fiverr.com/", "mode": "email"},
 }
 STATUSES = {"lead", "in_progress", "completed", "cancelled", "refunded", "partial_refund", "disputed"}
 JOB_QUERY = """query { marketplaceJobPostingsSearch(searchType: USER_JOBS_SEARCH,
@@ -171,7 +171,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
         for platform, info in PLATFORMS.items():
             con = connections.get(platform)
             result.append(dict(platform=platform, **info, connected=bool(con),
-                state="manual" if platform == "fiverr" else ("attention" if con and con["last_error"] else "connected" if con else "not_connected"),
+                state=("attention" if con and con["last_error"] else "connected" if con else "not_connected"),
                 label=con["label"] if con else "", last_synced_at=con["last_synced_at"] if con else None,
                 last_error=con["last_error"] if con else ""))
         return jsonify(channels=result, totals=[dict(currency=r["currency"],amount=str(r["amount"]),count=r["count"]) for r in totals],

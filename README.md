@@ -76,3 +76,38 @@ Final application submission remains human-confirmed. The product does not fabri
 ## Commercial
 
 See `sales/PRODUCT.md`, `sales/SETUP.md`, and `sales/FAQ.md`.
+
+### Fiverr bildirimleri — Gmail üzerinden
+
+Fiverr API anahtarı gerekmez. Platformlar → Fiverr → **Gmail ile bağla** üzerinden
+Fiverr bildirimlerini alan Google hesabına ayrı izin verin. ChatGPT Gmail bağlantısı
+bu sunucuya aktarılmaz; Google ile giriş izni de Gmail okuma izni sağlamaz.
+
+Sunucu ayarları:
+- Mevcut `GOOGLE_CLIENT_ID` ve `GOOGLE_CLIENT_SECRET` web uygulaması kimliği.
+- `GMAIL_REDIRECT_URI=https://upwork-agent-pro.onrender.com/auth/gmail/callback`.
+  Bu adresi aynı Google Cloud OAuth istemcisinin authorized redirect URI listesine ekleyin.
+- Google Cloud projesinde Gmail API'yi etkinleştirin ve consent screen'e
+  `https://www.googleapis.com/auth/gmail.readonly` kapsamını ekleyin.
+  Test modunda hesabı test kullanıcısı olarak ekleyin; Google'ın test modu token
+  süreleri ve yayına geçiş/doğrulama gereksinimleri geçerlidir.
+- Mevcut kalıcı `INTEGRATION_ENCRYPTION_KEY` (Fernet) ve `SESSION_SECRET` gerekir.
+  Şifreleme anahtarını değiştirmek mevcut platform tokenlarını geçersiz kılar.
+
+Okuma izni Gmail hesabına kapsamlıdır; uygulama yalnızca son 90 gündeki
+`from:(fiverr.com) -in:spam -in:trash` sorgusunu çalıştırır. E-postaları göndermez,
+silmez, okunmuş yapmaz. Google giriş güvenlik uyarıları Fiverr kaynaklı sayılmaz.
+Konuya göre Mesaj / Sipariş / Teklif / Bildirim sınıflandırması sezgiseldir.
+Yalnızca başlık, gönderici, kısa önizleme, tarih ve okunmamış bilgisi saklanır;
+bu akış tam Fiverr konuşmasını veya doğrulanmış sipariş tutarını sağlamaz.
+Satış toplamları değişmez; doğrulanmış siparişi mevcut manuel formdan ekleyin.
+
+**E-postaları eşitle** geçmişi üç kayıtlık sayfalarla tarar, en sık dakikada bir
+çalışır. Panel açık ve görünürken iki dakikada bir otomatik eşitleme yapılır.
+Panel kapalıyken arka plan görevi çalışmaz. Bağlantı kaldırıldığında sunucudaki
+Gmail tokenı ve bildirim kayıtları silinir; Google hesabındaki uygulama iznini
+Google hesap güvenliği sayfasından ayrıca iptal edebilirsiniz.
+
+Referanslar:
+- https://developers.google.com/workspace/gmail/api/auth/web-server
+- https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list
