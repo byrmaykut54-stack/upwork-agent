@@ -80,7 +80,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(response.status_code,200,response.json)
         jobs=self.client.get('/api/jobs').json['jobs']
         self.assertEqual(len(jobs),1)
-        self.assertEqual(jobs[0]['external_id'],'job-123')
+        with app.db() as c:
+            count=c.execute("SELECT COUNT(*) AS n FROM jobs WHERE external_id=%s",('job-123',)).fetchone()['n']
+            self.assertEqual(count,1)
 
     def order(self, **changes):
         row=dict(platform='upwork',external_id='F1',title='Automation',amount='25.00',currency='USD',status='completed')
