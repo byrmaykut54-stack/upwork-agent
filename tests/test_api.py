@@ -31,6 +31,25 @@ class ApiTests(unittest.TestCase):
         r = self.mutate('/api/auth/register', {'email': email, 'password': 'testpassword123'})
         self.assertEqual(r.status_code, 200)
 
+    def test_manual_account_isolated_and_does_not_grant_api_access(self):
+        path = '/api/channels/bionluk/manual-account'
+        payload = {'username':'aykutbayram','notes':'2 ilan; satış yok'}
+        self.assertEqual(self.mutate(path,payload,method='PUT').status_code,401)
+        self.register()
+        self.assertEqual(self.mutate(path,payload,method='PUT').status_code,200)
+        channel = next(c for c in self.client.get('/api/channels').json['channels'] if c['platform']=='bionluk')
+        self.assertEqual(channel['manual_account']['username'],'aykutbayram')
+        self.assertFalse(channel['connected'])
+        self.assertEqual(channel['state'],'manual')
+        self.assertEqual(self.client.get('/api/channel-orders').json['orders'],[])
+        self.assertEqual(self.mutate(path,{'username':[]},method='PUT').status_code,400)
+        self.assertEqual(self.mutate('/api/channels/gumroad/manual-account',payload,method='PUT').status_code,400)
+        other = app.app.test_client()
+        self.csrf = other.get('/api/session').json['csrf']
+        self.assertEqual(self.mutate('/api/auth/register',{'email':'second@example.com','password':'testpassword123'},client=other).status_code,200)
+        channel = next(c for c in other.get('/api/channels').json['channels'] if c['platform']=='bionluk')
+        self.assertIsNone(channel['manual_account'])
+
     def test_auth_and_csrf(self):
         self.assertEqual(self.client.get('/health').status_code, 200)
         self.assertEqual(self.client.post('/api/auth/register', json={}).status_code, 403)
