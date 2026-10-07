@@ -76,3 +76,12 @@ Final application submission remains human-confirmed. The product does not fabri
 ## Commercial
 
 See `sales/PRODUCT.md`, `sales/SETUP.md`, and `sales/FAQ.md`.
+
+## Gumroad read-only OAuth
+
+Platformlar → Gumroad ile bağlan accepts your own application's ID and secret.
+Register `${APP_BASE_URL}/oauth/gumroad/callback` as the redirect URI (HTTPS).
+Only `view_profile view_sales` are requested and the returned scopes are checked.
+Pending credentials are encrypted server-side, tied to the signed-in user and
+consumed once within ten minutes. Tokens never enter browser URLs or cookies.
+The existing encrypted API-token connection remains available.

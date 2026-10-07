@@ -69,6 +69,54 @@ class ApiTests(unittest.TestCase):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code,200,response.json)
 
+    @patch('gumroad_oauth.urllib.request.build_opener')
+    @patch('central.remote_json')
+    def test_gumroad_oauth_readonly_and_replay(self, remote, opener):
+        import json
+        from urllib.parse import urlparse, parse_qs
+        self.register()
+        remote.return_value = {'user': {'name': 'MexAy Digital'}}
+        response = opener.return_value.open.return_value.__enter__.return_value
+        response.read.return_value = json.dumps({'access_token':'read-only-test-token',
+            'scope':'view_profile view_sales'}).encode()
+        start = self.mutate('/api/channels/gumroad/oauth/start',
+            {'client_id':'test-client-id','client_secret':'test-client-secret'})
+        self.assertEqual(start.status_code, 200)
+        params = parse_qs(urlparse(start.json['url']).query)
+        self.assertEqual(params['scope'], ['view_profile view_sales'])
+        self.assertNotIn('test-client-secret', start.data.decode())
+        with app.db() as c:
+            row = c.execute('SELECT encrypted_config FROM channel_oauth_pending').fetchone()
+            self.assertNotIn('test-client-secret', row['encrypted_config'])
+        callback = '/oauth/gumroad/callback?state='+params['state'][0]+'&code=test-code'
+        self.assertEqual(self.client.get(callback).location, '/?gumroad=connected')
+        self.assertEqual(self.client.get(callback).status_code, 400)
+        self.assertEqual(opener.return_value.open.call_count, 1)
+        hub = self.client.get('/api/channels').json
+        self.assertTrue(next(c for c in hub['channels'] if c['platform']=='gumroad')['connected'])
+
+    @patch('gumroad_oauth.urllib.request.build_opener')
+    def test_gumroad_oauth_rejects_broad_scopes_and_wrong_state(self, opener):
+        import json
+        from urllib.parse import urlparse, parse_qs
+        self.register()
+        start = self.mutate('/api/channels/gumroad/oauth/start',
+            {'client_id':'test-client-id','client_secret':'test-client-secret'})
+        state = parse_qs(urlparse(start.json['url']).query)['state'][0]
+        self.assertEqual(self.client.get('/oauth/gumroad/callback?state=wrong&code=x').status_code,400)
+        opener.return_value.open.assert_not_called()
+        start = self.mutate('/api/channels/gumroad/oauth/start',
+            {'client_id':'test-client-id','client_secret':'test-client-secret'})
+        state = parse_qs(urlparse(start.json['url']).query)['state'][0]
+        response = opener.return_value.open.return_value.__enter__.return_value
+        response.read.return_value = json.dumps({'access_token':'broad-test-token',
+            'scope':'view_profile view_sales edit_products'}).encode()
+        failed = self.client.get('/oauth/gumroad/callback?state='+state+'&code=test-code')
+        self.assertEqual(failed.status_code,502)
+        self.assertNotIn('broad-test-token',failed.data.decode())
+        with app.db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM channel_connections WHERE platform='gumroad'").fetchone()['n'],0)
+
     @patch('central.remote_json')
     def test_upwork_sync_updates_existing_job(self, remote):
         self.register()
