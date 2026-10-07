@@ -104,6 +104,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(other.get('/api/channel-orders').json['orders'],[])
         self.assertEqual(other.patch('/api/channel-orders/'+str(oid),json={'status':'completed'},headers={'X-CSRF-Token':token}).status_code,404)
 
+    def test_manual_channels_orders_export_and_totals(self):
+        self.register()
+        hub = self.client.get('/api/channels').json
+        for platform in ('bionluk', 'payhip'):
+            channel = next(c for c in hub['channels'] if c['platform'] == platform)
+            self.assertEqual(channel['state'], 'manual')
+            self.assertFalse(channel['connected'])
+            self.assertEqual(self.mutate('/api/channels/'+platform+'/connect', {'token':'unused'}).status_code, 400)
+            row = self.order(platform=platform, external_id='same-id')
+            self.assertEqual(self.mutate('/api/channel-orders/import', {'orders':[row]}).status_code, 200)
+        self.assertEqual(self.client.get('/api/channel-orders').json['total'], 2)
+        self.assertEqual(self.client.get('/api/channels').json['totals'][0]['amount'], '50.00')
+        self.mutate('/api/channel-orders/import', {'orders':[self.order(platform='payhip',external_id='same-id',amount='30')]})
+        rows = self.client.get('/api/channel-orders').json['orders']
+        self.assertEqual(len(rows), 2)
+        oid = next(r['id'] for r in rows if r['platform'] == 'bionluk')
+        self.assertEqual(self.mutate('/api/channel-orders/'+str(oid), {'status':'refunded'}, method='PATCH').status_code, 200)
+        self.assertEqual(self.client.get('/api/channels').json['totals'][0]['amount'], '30.00')
+        exported = self.client.get('/api/channel-orders/export').data.decode()
+        self.assertIn('bionluk,same-id', exported)
+        self.assertIn('payhip,same-id', exported)
+
     def test_import_validation_atomic_and_csv_safety(self):
         self.register()
         for amount in ['NaN','Infinity','-1','0.001']:

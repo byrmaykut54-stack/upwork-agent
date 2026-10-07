@@ -2,8 +2,8 @@
 
 Live service: https://upwork-agent-pro.onrender.com
 
-One authenticated workspace for Upwork jobs/proposal drafts and Upwork, Gumroad,
- orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL schema. The Business OS public tables are independent; no cross-app users or password tokens are shared. Startup is idempotent and health checks verify required columns.
+One email/password authenticated workspace for Upwork jobs/proposal drafts and
+Upwork, Gumroad, Bionluk and Payhip orders. Agent tables live exclusively in the `upwork_agent` PostgreSQL schema. The Business OS public tables are independent; no cross-app users or password tokens are shared. Startup is idempotent and health checks verify required columns.
 
 - Platform cards show real connection status, last sync and provider errors.
 - Gumroad API connection validates `view_profile` and `view_sales`, encrypts the
@@ -12,7 +12,7 @@ One authenticated workspace for Upwork jobs/proposal drafts and Upwork, Gumroad,
 - Upwork requires an approved developer application's OAuth access token with job
   search permission. Sync reads marketplace jobs; proposals remain drafts and must
   be submitted on Upwork. Token renewal is manual. No contract/message API is implemented.
--  is manual order tracking and normalized CSV import, with a direct platform link.
+- Bionluk and Payhip support manual order tracking and normalized CSV import, with a direct platform link.
 - Orders use platform + order ID for deduplication. API records cannot be edited
   manually. Manual records support status, due date and notes.
 - Completed gross amounts are grouped by currency, without FX conversion or fee
@@ -55,7 +55,7 @@ external account connectivity is tested only after valid provider keys are suppl
 
 `platform,external_id,title,customer,amount,currency,status,due_date,notes`
 
-Platform: `upwork`, `gumroad`, ``. Currency defaults to `USD`.
+Platform: `upwork`, `gumroad`, `bionluk`, `payhip`. Currency defaults to `USD`.
 Status: `lead`, `in_progress`, `completed`, `cancelled`, `refunded`,
 `partial_refund`, `disputed`. Due date: `YYYY-MM-DD` or empty.
 

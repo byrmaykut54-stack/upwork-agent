@@ -15,6 +15,8 @@ from flask import Blueprint, jsonify, request, session, Response
 PLATFORMS = {
     "upwork": {"name": "Upwork", "url": "https://www.upwork.com/nx/find-work/", "mode": "api"},
     "gumroad": {"name": "Gumroad", "url": "https://gumroad.com/dashboard", "mode": "api"},
+    "bionluk": {"name": "Bionluk", "url": "https://bionluk.com/", "mode": "manual"},
+    "payhip": {"name": "Payhip", "url": "https://payhip.com/store", "mode": "manual"},
 }
 STATUSES = {"lead", "in_progress", "completed", "cancelled", "refunded", "partial_refund", "disputed"}
 JOB_QUERY = """query { marketplaceJobPostingsSearch(searchType: USER_JOBS_SEARCH,
@@ -138,7 +140,7 @@ def validate_order(d):
 
 
 def save_manual(c, uid, order):
-    existing = c.execute("SELECT source FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') AND platform=%s AND external_id=%s FOR UPDATE",
+    existing = c.execute("SELECT source FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') AND platform=%s AND external_id=%s FOR UPDATE",
                          (uid, order["platform"], order["external_id"])).fetchone()
     if existing and existing["source"] != "manual":
         raise ValueError("API'den gelen kaydı elle değiştiremezsiniz.")
@@ -165,17 +167,17 @@ def register(app, db, auth_required, run_pipeline, profile_for):
             connections = {r["platform"]: r for r in c.execute(
                 "SELECT platform,label,last_synced_at,last_error FROM channel_connections WHERE user_id=%s", (session["user_id"],)).fetchall()}
             totals = c.execute("""SELECT currency,SUM(amount) AS amount,COUNT(*) AS count FROM channel_orders
-                WHERE user_id=%s AND platform IN ('upwork','gumroad') AND status='completed' AND is_test=FALSE GROUP BY currency ORDER BY currency""", (session["user_id"],)).fetchall()
+                WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') AND status='completed' AND is_test=FALSE GROUP BY currency ORDER BY currency""", (session["user_id"],)).fetchall()
             stats = c.execute("""SELECT COUNT(*) AS orders,
                 COUNT(*) FILTER(WHERE status IN ('lead','in_progress')) AS active,
                 COUNT(*) FILTER(WHERE due_date<CURRENT_DATE AND status='in_progress') AS overdue
-                FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') AND is_test=FALSE""", (session["user_id"],)).fetchone()
+                FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') AND is_test=FALSE""", (session["user_id"],)).fetchone()
         result = []
         for platform, info in PLATFORMS.items():
             con = connections.get(platform)
-            result.append(dict(platform=platform, **info, connected=bool(con),
-                state=("attention" if con and con["last_error"] else "connected" if con else "not_connected"),
-                label=con["label"] if con else "", last_synced_at=con["last_synced_at"] if con else None,
+            result.append(dict(platform=platform, **info, connected=bool(con) if info["mode"] == "api" else False,
+                state=("manual" if info["mode"] == "manual" else "attention" if con and con["last_error"] else "connected" if con else "not_connected"),
+                label=con["label"] if con else "Siparişleri elle ekleyin veya standart CSV yükleyin." if info["mode"] == "manual" else "", last_synced_at=con["last_synced_at"] if con else None,
                 last_error=con["last_error"] if con else ""))
         return jsonify(channels=result, totals=[dict(currency=r["currency"],amount=str(r["amount"]),count=r["count"]) for r in totals],
                        stats=stats, token_storage_ready=bool(os.environ.get("INTEGRATION_ENCRYPTION_KEY")))
@@ -284,8 +286,8 @@ def register(app, db, auth_required, run_pipeline, profile_for):
     def orders():
         if (e := auth_required()): return e
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY occurred_at DESC LIMIT 1000", (session["user_id"],)).fetchall()
-            total = c.execute("SELECT COUNT(*) AS n FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad')", (session["user_id"],)).fetchone()["n"]
+            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') ORDER BY occurred_at DESC LIMIT 1000", (session["user_id"],)).fetchall()
+            total = c.execute("SELECT COUNT(*) AS n FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip')", (session["user_id"],)).fetchone()["n"]
         for r in rows: r["amount"] = str(r["amount"])
         return jsonify(orders=rows,total=total)
 
@@ -335,7 +337,7 @@ def register(app, db, auth_required, run_pipeline, profile_for):
         writer = csv.writer(output)
         writer.writerow(fields)
         with db() as c:
-            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad') ORDER BY occurred_at DESC", (session["user_id"],)).fetchall()
+            rows = c.execute("SELECT * FROM channel_orders WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') ORDER BY occurred_at DESC", (session["user_id"],)).fetchall()
         for row in rows:
             cells = []
             for field in fields:
