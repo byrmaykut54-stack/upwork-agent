@@ -81,6 +81,9 @@ def remote_json(platform, token, path=None, params=None):
 
 
 def initialize(c):
+    c.execute("""CREATE TABLE IF NOT EXISTS channel_oauth_pending (
+        state TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        encrypted_config TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL)""")
     c.execute("""CREATE TABLE IF NOT EXISTS channel_connections (
         user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
         platform TEXT NOT NULL, encrypted_token TEXT NOT NULL,
@@ -155,6 +158,8 @@ def save_manual(c, uid, order):
 
 def register(app, db, auth_required, run_pipeline, profile_for):
     bp = Blueprint("channels", __name__)
+    from gumroad_oauth import register_oauth
+    register_oauth(bp, db, auth_required, cipher, remote_json, NoRedirect, ProviderError)
 
     @bp.errorhandler(ProviderError)
     def provider_error(exc):
