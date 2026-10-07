@@ -81,6 +81,10 @@ def remote_json(platform, token, path=None, params=None):
 
 
 def initialize(c):
+    c.execute("""CREATE TABLE IF NOT EXISTS channel_manual_accounts (
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        platform TEXT NOT NULL, username TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(user_id, platform))""")
     c.execute("""CREATE TABLE IF NOT EXISTS channel_oauth_pending (
         state TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         encrypted_config TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL)""")
@@ -171,6 +175,9 @@ def register(app, db, auth_required, run_pipeline, profile_for):
         with db() as c:
             connections = {r["platform"]: r for r in c.execute(
                 "SELECT platform,label,last_synced_at,last_error FROM channel_connections WHERE user_id=%s", (session["user_id"],)).fetchall()}
+            manual_accounts = {r["platform"]: r for r in c.execute(
+                "SELECT platform,username,notes,updated_at FROM channel_manual_accounts WHERE user_id=%s",
+                (session["user_id"],)).fetchall()}
             totals = c.execute("""SELECT currency,SUM(amount) AS amount,COUNT(*) AS count FROM channel_orders
                 WHERE user_id=%s AND platform IN ('upwork','gumroad','bionluk','payhip') AND status='completed' AND is_test=FALSE GROUP BY currency ORDER BY currency""", (session["user_id"],)).fetchall()
             stats = c.execute("""SELECT COUNT(*) AS orders,
@@ -183,9 +190,27 @@ def register(app, db, auth_required, run_pipeline, profile_for):
             result.append(dict(platform=platform, **info, connected=bool(con) if info["mode"] == "api" else False,
                 state=("manual" if info["mode"] == "manual" else "attention" if con and con["last_error"] else "connected" if con else "not_connected"),
                 label=con["label"] if con else "Siparişleri elle ekleyin veya standart CSV yükleyin." if info["mode"] == "manual" else "", last_synced_at=con["last_synced_at"] if con else None,
-                last_error=con["last_error"] if con else ""))
+                last_error=con["last_error"] if con else "", manual_account=manual_accounts.get(platform)))
         return jsonify(channels=result, totals=[dict(currency=r["currency"],amount=str(r["amount"]),count=r["count"]) for r in totals],
                        stats=stats, token_storage_ready=bool(os.environ.get("INTEGRATION_ENCRYPTION_KEY")))
+
+    @bp.put("/api/channels/<platform>/manual-account")
+    def manual_account(platform):
+        if (e := auth_required()): return e
+        if platform not in {"bionluk", "payhip"}:
+            return jsonify(error="Bu platform hesap notu desteklemiyor."), 400
+        d = request.get_json(silent=True)
+        if not isinstance(d, dict):
+            return jsonify(error="Geçerli hesap bilgisi gerekli."), 400
+        username, notes = d.get("username"), d.get("notes", "")
+        if not isinstance(username, str) or not 1 <= len(username.strip()) <= 100 or not isinstance(notes, str) or len(notes) > 4000:
+            return jsonify(error="Hesap adı ve en fazla 4000 karakterlik not gerekli."), 400
+        with db() as c:
+            c.execute("""INSERT INTO channel_manual_accounts(user_id,platform,username,notes)
+                VALUES(%s,%s,%s,%s) ON CONFLICT(user_id,platform) DO UPDATE
+                SET username=EXCLUDED.username,notes=EXCLUDED.notes,updated_at=NOW()""",
+                (session["user_id"], platform, username.strip(), notes.strip()))
+        return jsonify(ok=True)
 
     @bp.post("/api/channels/<platform>/connect")
     def connect(platform):
