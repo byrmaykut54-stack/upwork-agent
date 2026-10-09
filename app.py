@@ -393,6 +393,8 @@ def create_proposal():
     if (e := auth_required()): return e
     d = request.get_json(silent=True) or {}
     job_id = d.get("job_id")
+    if isinstance(job_id, bool) or not isinstance(job_id, int) or not 0 < job_id <= 9223372036854775807:
+        return jsonify(error="Geçerli bir ilan seçin."), 400
     with db() as c:
         u = normalize_usage(c, c.execute("SELECT * FROM users WHERE id=%s FOR UPDATE", (session["user_id"],)).fetchone())
         lim = plan_limits(u["plan"])["proposals"]

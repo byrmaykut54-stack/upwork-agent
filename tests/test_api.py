@@ -78,6 +78,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/proposals').json['proposals'][0]['body'],'Reviewed proposal')
         self.assertEqual(self.mutate('/api/scan',{'jobs':'bad'}).status_code,400)
 
+    def test_invalid_proposal_job_ids_are_client_errors(self):
+        self.register()
+        for value in (None, True, 'abc', '1', {}, [], 0, -1, 9223372036854775808):
+            with self.subTest(value=value):
+                self.assertEqual(self.mutate('/api/proposals', {'job_id': value}).status_code, 400)
+        self.assertEqual(self.mutate('/api/proposals', {'job_id': 999}).status_code, 404)
+
     def test_all_panel_reads_after_login(self):
         self.register()
         paths = ['/api/dashboard','/api/jobs','/api/proposals','/api/notifications',
