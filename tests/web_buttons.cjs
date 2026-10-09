@@ -15,6 +15,8 @@ handlers.click({target:{closest:()=>node('button')}});await context.saveProfile(
 await context.api('/api/settings',{method:'PUT',body:'{}'});const writes=calls.filter(x=>x.u==='/api/settings');assert.equal(writes.length,2);assert.equal(writes[1].o.headers['X-CSRF-Token'],'fresh');
 // Dynamically installed submit handlers get consistent progress and recovery.
 const form={dataset:{},querySelector:()=>node('submit'),onsubmit:async()=>{throw Error('Form failure')}};await handlers.submit({target:form,submitter:node('submit'),preventDefault(){},stopImmediatePropagation(){}});assert.equal(form.dataset.actionBusy,undefined);assert.equal(node('submit').disabled,false);assert.match(node('toast').textContent,/Form failure/);
+// A failed status update restores the last confirmed proposal selection.
+const sharedApi=context.api;let restored=0;context.proposals=()=>{restored++};context.api=async()=>{throw Error('Status unavailable')};await context.pstatus(1,'won');assert.equal(restored,1);assert.match(node('toast').textContent,/Status unavailable/);context.api=sharedApi;
 // Logout keeps its existing state machine rather than being pre-disabled.
 await node('logout').onclick();assert.equal(node('logout').disabled,false);
 console.log('Fiverr removal, shared busy/error handling, CSRF recovery, dynamic forms and logout passed');})().catch(e=>{console.error(e);process.exitCode=1});
