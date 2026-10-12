@@ -1,35 +1,24 @@
-# Upwork Agent Pro
+# MexAy Job Draft Assistant and Channel Hub
 
-A human-in-the-loop assistant for finding, filtering, scoring, and preparing Upwork applications.
+An independent tool to rank authorized job exports and prepare editable proposal drafts using the buyer's verified profile facts.
 
-## Core value
-- Finds relevant jobs from an authorized Upwork connection
-- Applies configurable budget, payment, competition, and keyword filters
-- Scores opportunities consistently
-- Generates proposal drafts from verified profile facts
-- Drafts screening answers without inventing experience
-- Shows Connects cost and eligibility before submission
-- Keeps final proposal submission behind explicit user confirmation
+## Deliverable editions
 
-## Target customer
-Freelancers, boutique agencies, and independent consultants who spend too much time searching Upwork and writing repetitive proposals.
+- **Offline draft assistant:** Python source, configurable ranking, qualification checks, proposal drafts, fictional sample, tests and setup guide. Works without a paid AI API. Proposal generation is template based.
+- **Optional Channel Hub setup:** Flask/PostgreSQL workspace for job/proposal and order tracking. Provider synchronization needs the buyer's own approved API access. Bionluk and Payhip tracking is manual/CSV.
 
-## Included
-- Python application pipeline
-- Configurable scoring and eligibility rules
-- Proposal and screening-draft generator
-- Safety gates for Connects and minimum budget
-- Tests and GitHub Actions workflow
-- Setup and operating documentation
+The offline package is the standalone deliverable. Hosted customer access, billing, external authorization and email delivery are separate acceptance tasks. The seller's existing account is not transferred to a buyer.
 
-## Suggested packaging
-**Starter — $29 one-time**: core filtering, scoring, proposal drafts, tests.
+## Scope and acceptance
 
-**Pro — $79 one-time**: Starter plus custom scoring rules, profile configuration, reporting, and setup guide.
+A buyer must be able to run the documented command, import a valid JSON export and save a draft queue. The queue must keep submission eligibility false. Missing Connects cost and insufficient balance are shown as review limits. Profile facts are supplied by the buyer; the tool does not verify their truth.
 
-**Agency — $149 one-time**: Pro plus multi-profile configuration and deployment guidance.
+## Service package draft (USD; scope to be included in marketplace listing)
 
-These are suggested product prices, not claims about market value.
+| Package | Price | Delivery | Included |
+|---|---:|---|---|
+| Starter | $29 | 3 days | Offline source package; one profile/configuration; setup guide; one revision |
+| Standard | $79 | 5 days | Starter plus ranking configuration for one workflow and one sample export; two revisions |
+| Hosted setup | $149 | 7 days | Standard plus one buyer-owned Channel Hub deployment and handover; valid provider credentials and paid hosting supplied separately |
 
-## Boundaries
-No automatic Connects spending, no guaranteed jobs or earnings, no fabricated credentials/results, and no circumvention of platform controls.
+Hosted setup must be offered only after its deployment/backup acceptance is verified. No guaranteed jobs or earnings; no automatic proposal submission; no Upwork affiliation. The buyer submits applications on Upwork. Live APIs, paid hosting and ongoing support are not included in the offline price.
