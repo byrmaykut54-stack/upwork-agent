@@ -7,3 +7,6 @@ agent/profile.json
 agent/jobs.json
 *.log
 .DS_Store
+
+draft-queue*.json
+dist/

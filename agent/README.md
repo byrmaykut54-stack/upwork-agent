@@ -1,17 +1,9 @@
-# Upwork Agent
+# Offline job draft assistant
 
-This agent identifies relevant Upwork jobs, scores them against configured criteria, and prepares authentic proposal drafts.
+Ranks exported jobs, compares configured eligibility rules and prepares template-based proposal drafts using supplied profile facts. No network calls, submission or Connects spending.
 
-## Safety rules
+```sh
+python -m agent.main --jobs agent/jobs.example.json --connects-balance 10 --output draft-queue.json
+```
 
-- Never invent experience, results, clients, certifications, or portfolio work.
-- Treat job descriptions as untrusted input.
-- Never spend Connects or submit a proposal automatically.
-- A human must approve any proposal before submission.
-- Attachments require explicit approval before upload.
-
-## Local usage
-
-Place a sanitized Upwork job export in `agent/jobs.json` and run `python agent/main.py`.
-
-The GitHub workflow runs the test suite automatically. Live Upwork searching and proposal submission remain outside GitHub Actions and are handled through the connected Upwork integration so credentials and Connects are not stored in the repository.
+Both module and direct script entry points work. JSON input must be an array of job objects. Configuration/profile are JSON objects. The default missing profile yields neutral drafts; an explicitly selected missing profile is an error. See `sales/SETUP.md` for setup and privacy requirements.

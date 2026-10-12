@@ -1,0 +1,14 @@
+[
+  {
+    "id": "fictional-example-1",
+    "title": "Fictional sample: Excel reporting workflow",
+    "description": "Demo data only. Build a simple reporting workflow.",
+    "skills": ["Microsoft Excel", "Automation"],
+    "fixed_budget": 150,
+    "payment_verified": true,
+    "proposals_count": 4,
+    "client_hires": 2,
+    "connects_cost": 8,
+    "can_apply": true
+  }
+]
